@@ -2,6 +2,7 @@ import express from "express";
 import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, requirePermission } from "../middleware/auth.js";
 import { createSeedData } from "../src/database/seed.js";
+import { recordAuditLog } from "../src/audit.js";
 
 const router = express.Router();
 
@@ -9,6 +10,7 @@ router.use(authenticateToken, requirePermission("manageData"));
 
 router.delete("/history", (req, res) => {
   const db = getDB();
+  const deletedTransactions = db.txns.filter(txn => txn.instanceId === req.user.instanceId).length;
   const items = db.items.map(item => item.instanceId === req.user.instanceId ? ({ ...item, sold: 0 }) : item);
   const txns = db.txns.filter(txn => txn.instanceId !== req.user.instanceId);
   const notifications = db.notifications.filter(notification => notification.instanceId !== req.user.instanceId);
@@ -16,6 +18,14 @@ router.delete("/history", (req, res) => {
   saveCollection("txns", txns);
   saveCollection("notifications", notifications);
   saveCollection("items", items);
+  recordAuditLog({
+    req,
+    action: "admin.history_delete",
+    entityType: "data",
+    entityId: req.user.instanceId,
+    summary: "Deleted sales history",
+    metadata: { deletedTransactions },
+  });
 
   res.json({ message: "Sales history deleted", txns: 0, notifications: 0, items: items.filter(item => item.instanceId === req.user.instanceId) });
 });
@@ -55,6 +65,14 @@ router.post("/reset", async (req, res) => {
     saveCollection("txns", txns);
     saveCollection("notifications", notifications);
     saveCollection("refreshTokens", refreshTokens);
+    recordAuditLog({
+      req,
+      action: "admin.reset_demo",
+      entityType: "data",
+      entityId: req.user.instanceId,
+      summary: "Restored demo data",
+      metadata: { items: seed.items.length, users: seed.users.length, transactions: seed.txns.length },
+    });
 
     return res.json({ message: "Demo data restored", data: { items, users, txns, notifications } });
   }
@@ -73,6 +91,13 @@ router.post("/reset", async (req, res) => {
   saveCollection("txns", txns);
   saveCollection("notifications", notifications);
   saveCollection("refreshTokens", refreshTokens);
+  recordAuditLog({
+    req,
+    action: "admin.reset_fresh",
+    entityType: "data",
+    entityId: req.user.instanceId,
+    summary: "Started fresh and cleared instance data",
+  });
 
   res.json({ message: "Data cleared. Current admin account was kept.", data: { items, users, txns, notifications } });
 });

@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, normalizeRole } from "../middleware/auth.js";
 import { getLicenseAccess } from "../src/license.js";
+import { recordAuditLog } from "../src/audit.js";
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "stockos_secret_key_123";
@@ -121,16 +122,44 @@ router.post("/login", async (req, res) => {
   const instance = user ? db.instances.find(item => item.id === user.instanceId) : null;
   const accessError = validateAccountAccess(user, instance);
   if (accessError) {
+    if (user?.instanceId) {
+      recordAuditLog({
+        req,
+        actor: { id: user.id, name: user.name, email: user.email, role: normalizeRole(user.role), instanceId: user.instanceId },
+        action: "auth.login_blocked",
+        entityType: "user",
+        entityId: user.id,
+        summary: `Blocked login for ${user.email}`,
+        metadata: { reason: accessError.message },
+      });
+    }
     return res.status(accessError.status).json({ message: accessError.message });
   }
 
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) {
+    recordAuditLog({
+      req,
+      actor: { id: user.id, name: user.name, email: user.email, role: normalizeRole(user.role), instanceId: user.instanceId },
+      action: "auth.login_failed",
+      entityType: "user",
+      entityId: user.id,
+      summary: `Failed login for ${user.email}`,
+      metadata: { email: user.email },
+    });
     return res.status(401).json({ message: "Invalid credentials" });
   }
 
   const userRole = normalizeRole(user.role);
   const refresh = issueRefreshToken(db, user, req);
+  recordAuditLog({
+    req,
+    actor: { id: user.id, name: user.name, email: user.email, role: userRole, instanceId: user.instanceId },
+    action: "auth.login_success",
+    entityType: "user",
+    entityId: user.id,
+    summary: `Signed in ${user.email}`,
+  });
 
   res.json({
     token: createAccessToken(user, userRole),
@@ -181,6 +210,14 @@ router.post("/refresh", (req, res) => {
   saveCollection("refreshTokens", db.refreshTokens);
 
   const userRole = normalizeRole(user.role);
+  recordAuditLog({
+    req,
+    actor: { id: user.id, name: user.name, email: user.email, role: userRole, instanceId: user.instanceId },
+    action: "auth.refresh",
+    entityType: "session",
+    entityId: session.id,
+    summary: `Refreshed session for ${user.email}`,
+  });
   res.json({
     token: createAccessToken(user, userRole),
     accessTokenExpiresIn: ACCESS_TOKEN_EXPIRES_IN,
@@ -199,8 +236,20 @@ router.post("/logout", (req, res) => {
     const index = (db.refreshTokens || []).findIndex(token => token.tokenHash === tokenHash && !token.revokedAt);
 
     if (index >= 0) {
+      const session = db.refreshTokens[index];
       db.refreshTokens[index] = { ...db.refreshTokens[index], revokedAt: new Date().toISOString() };
       saveCollection("refreshTokens", db.refreshTokens);
+      const user = db.users.find(item => item.id === session.userId && item.instanceId === session.instanceId);
+      if (user) {
+        recordAuditLog({
+          req,
+          actor: { id: user.id, name: user.name, email: user.email, role: normalizeRole(user.role), instanceId: user.instanceId },
+          action: "auth.logout",
+          entityType: "session",
+          entityId: session.id,
+          summary: `Signed out ${user.email}`,
+        });
+      }
     }
   }
 
@@ -249,6 +298,13 @@ router.put("/password", authenticateToken, async (req, res) => {
 
   saveCollection("users", db.users);
   revokeRefreshTokensForUser(db, user.id, user.instanceId);
+  recordAuditLog({
+    req,
+    action: "auth.password_change",
+    entityType: "user",
+    entityId: user.id,
+    summary: `Changed password for ${user.email}`,
+  });
 
   res.json({ message: "Password changed successfully. Sign in again to continue." });
 });

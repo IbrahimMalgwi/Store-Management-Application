@@ -97,5 +97,6 @@ export const createSeedData = async () => {
     txns: createSeedTransactions(users, SEED_ITEMS),
     notifications: SEED_NOTIFICATIONS.map(notification => ({ ...notification, instanceId: DEFAULT_INSTANCE_ID })),
     refreshTokens: [],
+    auditLogs: [],
   };
 };

@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, normalizeRole, requirePermission } from "../middleware/auth.js";
 import { hasSeatCapacity } from "../src/license.js";
+import { recordAuditLog } from "../src/audit.js";
 
 const router = express.Router();
 
@@ -71,6 +72,14 @@ router.post("/", async (req, res) => {
 
   db.users.push(newUser);
   saveCollection("users", db.users);
+  recordAuditLog({
+    req,
+    action: "user.create",
+    entityType: "user",
+    entityId: newUser.id,
+    summary: `Created user ${newUser.email}`,
+    metadata: { name: newUser.name, email: newUser.email, role: newUser.role, active: newUser.active },
+  });
 
   // Return user with placeholder password
   res.status(201).json({ ...newUser, password: "●●●●●●" });
@@ -131,6 +140,18 @@ router.put("/:id", async (req, res) => {
 
   db.users[index] = updatedUser;
   saveCollection("users", db.users);
+  recordAuditLog({
+    req,
+    action: "user.update",
+    entityType: "user",
+    entityId: updatedUser.id,
+    summary: `Updated user ${updatedUser.email}`,
+    metadata: {
+      before: { name: existingUser.name, email: existingUser.email, role: existingUser.role, active: existingUser.active },
+      after: { name: updatedUser.name, email: updatedUser.email, role: updatedUser.role, active: updatedUser.active },
+      passwordChanged: updatedPassword !== existingUser.password,
+    },
+  });
 
   res.json({ ...updatedUser, password: "●●●●●●" });
 });
@@ -177,6 +198,14 @@ router.post("/:id/reset-password", async (req, res) => {
       : token
   );
   saveCollection("refreshTokens", db.refreshTokens);
+  recordAuditLog({
+    req,
+    action: "user.password_reset",
+    entityType: "user",
+    entityId: db.users[index].id,
+    summary: `Reset password for ${db.users[index].email}`,
+    metadata: { targetEmail: db.users[index].email },
+  });
 
   res.json({ message: "Password reset successfully" });
 });
@@ -196,7 +225,7 @@ router.delete("/:id", (req, res) => {
     return res.status(404).json({ message: "User not found" });
   }
 
-  db.users.splice(index, 1);
+  const [deletedUser] = db.users.splice(index, 1);
   saveCollection("users", db.users);
 
   db.refreshTokens = (db.refreshTokens || []).map(token =>
@@ -205,6 +234,14 @@ router.delete("/:id", (req, res) => {
       : token
   );
   saveCollection("refreshTokens", db.refreshTokens);
+  recordAuditLog({
+    req,
+    action: "user.delete",
+    entityType: "user",
+    entityId: deletedUser.id,
+    summary: `Deleted user ${deletedUser.email}`,
+    metadata: { name: deletedUser.name, email: deletedUser.email, role: deletedUser.role },
+  });
 
   res.json({ message: "User deleted successfully" });
 });

@@ -1,6 +1,7 @@
 import express from "express";
 import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, requirePermission } from "../middleware/auth.js";
+import { recordAuditLog } from "../src/audit.js";
 
 const router = express.Router();
 
@@ -39,6 +40,14 @@ router.post("/", authenticateToken, requirePermission("manageInventory"), (req, 
 
   db.items.push(newItem);
   saveCollection("items", db.items);
+  recordAuditLog({
+    req,
+    action: "inventory.create",
+    entityType: "item",
+    entityId: newItem.id,
+    summary: `Created item ${newItem.sku} - ${newItem.name}`,
+    metadata: { sku: newItem.sku, name: newItem.name, qty: newItem.qty, amount: newItem.amount },
+  });
 
   res.status(201).json(newItem);
 });
@@ -98,6 +107,13 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
   }
 
   saveCollection("items", db.items);
+  recordAuditLog({
+    req,
+    action: "inventory.bulk_import",
+    entityType: "item",
+    summary: `Imported ${items.length} stock row(s): ${created} created, ${updated} updated`,
+    metadata: { created, updated, total: items.length },
+  });
   res.status(201).json({ message: "Bulk stock import completed", created, updated, total: items.length, items: db.items.filter(item => item.instanceId === req.user.instanceId) });
 });
 
@@ -123,8 +139,9 @@ router.put("/:id", authenticateToken, requirePermission("manageInventory"), (req
     return res.status(400).json({ message: "An item with this SKU already exists" });
   }
 
+  const previousItem = db.items[index];
   const updatedItem = {
-    ...db.items[index],
+    ...previousItem,
     sku,
     name,
     qty: Number(qty),
@@ -134,6 +151,14 @@ router.put("/:id", authenticateToken, requirePermission("manageInventory"), (req
 
   db.items[index] = updatedItem;
   saveCollection("items", db.items);
+  recordAuditLog({
+    req,
+    action: "inventory.update",
+    entityType: "item",
+    entityId: updatedItem.id,
+    summary: `Updated item ${updatedItem.sku} - ${updatedItem.name}`,
+    metadata: { before: previousItem, after: updatedItem },
+  });
 
   res.json(updatedItem);
 });
@@ -148,8 +173,16 @@ router.delete("/:id", authenticateToken, requirePermission("manageInventory"), (
     return res.status(404).json({ message: "Item not found" });
   }
 
-  db.items.splice(index, 1);
+  const [deletedItem] = db.items.splice(index, 1);
   saveCollection("items", db.items);
+  recordAuditLog({
+    req,
+    action: "inventory.delete",
+    entityType: "item",
+    entityId: deletedItem.id,
+    summary: `Deleted item ${deletedItem.sku} - ${deletedItem.name}`,
+    metadata: { sku: deletedItem.sku, name: deletedItem.name },
+  });
 
   res.json({ message: "Item deleted successfully" });
 });

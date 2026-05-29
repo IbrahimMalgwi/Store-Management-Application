@@ -2,6 +2,7 @@ import express from "express";
 import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, requirePermission } from "../middleware/auth.js";
 import { cleanLicenseInput, getLicenseAccess, LICENSE_MODES, LICENSE_PLANS, LICENSE_STATUSES } from "../src/license.js";
+import { recordAuditLog } from "../src/audit.js";
 
 const router = express.Router();
 
@@ -58,12 +59,21 @@ router.put("/business-profile", requirePermission("manageSettings"), (req, res) 
     return res.status(404).json({ message: "Instance not found" });
   }
 
+  const previousProfile = db.instances[index].businessProfile;
   db.instances[index] = {
     ...db.instances[index],
     businessProfile: profile,
   };
 
   saveCollection("instances", db.instances);
+  recordAuditLog({
+    req,
+    action: "settings.business_profile_update",
+    entityType: "settings",
+    entityId: req.user.instanceId,
+    summary: "Updated business profile settings",
+    metadata: { before: previousProfile, after: profile },
+  });
 
   res.json({
     message: "Business profile updated",
@@ -90,6 +100,7 @@ router.put("/license", requirePermission("manageSettings"), (req, res) => {
     return res.status(400).json({ message: `Seat limit cannot be lower than the current ${activeUserCount} active users` });
   }
 
+  const previousLicense = db.instances[index].license;
   db.instances[index] = {
     ...db.instances[index],
     plan: license.plan,
@@ -97,6 +108,14 @@ router.put("/license", requirePermission("manageSettings"), (req, res) => {
   };
 
   saveCollection("instances", db.instances);
+  recordAuditLog({
+    req,
+    action: "settings.license_update",
+    entityType: "settings",
+    entityId: req.user.instanceId,
+    summary: `Updated license settings to ${license.mode}/${license.plan}`,
+    metadata: { before: previousLicense, after: license },
+  });
 
   res.json({
     message: "License settings updated",

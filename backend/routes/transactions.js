@@ -1,6 +1,7 @@
 import express from "express";
 import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, hasPermission, requirePermission } from "../middleware/auth.js";
+import { recordAuditLog } from "../src/audit.js";
 
 const router = express.Router();
 
@@ -110,6 +111,19 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
   db.txns.push(...newTxns);
   saveCollection("items", db.items);
   saveCollection("txns", db.txns);
+  recordAuditLog({
+    req,
+    action: "sale.create",
+    entityType: "sale",
+    entityId: saleId,
+    summary: `Completed sale ${saleId} for ${customerDetails.name}`,
+    metadata: {
+      receiptNo: saleId,
+      customerName: customerDetails.name,
+      itemCount: newTxns.length,
+      total: newTxns.reduce((sum, txn) => sum + txn.amount, 0),
+    },
+  });
 
   res.status(201).json({
     message: "Sale completed successfully",
@@ -169,6 +183,15 @@ router.post("/:receiptId/print", authenticateToken, (req, res) => {
   }
 
   const updatedReceiptTxns = findReceiptTransactions(db, req.params.receiptId, req.user.instanceId);
+  recordAuditLog({
+    req,
+    action: hasPermission(req.user.role, "reprintReceipts") ? "receipt.reprint" : "receipt.print",
+    entityType: "receipt",
+    entityId: req.params.receiptId,
+    summary: `Printed receipt ${req.params.receiptId}`,
+    metadata: { receiptId: req.params.receiptId, transactionRows: updatedReceiptTxns.length },
+  });
+
   res.json({
     message: "Receipt print allowed",
     receiptPrinted: updatedReceiptTxns.some(t => t.receiptPrinted),

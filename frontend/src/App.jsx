@@ -1041,6 +1041,59 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canMa
   );
 }
 
+// ─── ADMIN: Audit Logs ───────────────────────────────────────────────────────
+function AdminAuditLogs({ logs }) {
+  const [search, setSearch] = useState("");
+  const query = search.toLowerCase();
+  const filtered = logs.filter(log =>
+    log.action.toLowerCase().includes(query) ||
+    log.entityType.toLowerCase().includes(query) ||
+    log.summary.toLowerCase().includes(query) ||
+    String(log.actorName || "").toLowerCase().includes(query)
+  ).slice(0, 200);
+
+  const actionClass = (action) => {
+    if (action.includes("delete") || action.includes("reset")) return "red";
+    if (action.includes("login") || action.includes("refresh")) return "blue";
+    if (action.includes("create") || action.includes("sale")) return "green";
+    if (action.includes("update") || action.includes("password")) return "orange";
+    return "gray";
+  };
+
+  return (
+    <>
+      <div className="section-header">
+        <h2>Audit Logs</h2>
+        <div className="search-wrap">
+          <span className="search-icon">{I.search}</span>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search activity..." style={{ width: 260 }} />
+        </div>
+      </div>
+
+      <div className="table-card">
+        <table>
+          <thead><tr><th>Time</th><th>Action</th><th>Summary</th><th>Actor</th><th>Entity</th></tr></thead>
+          <tbody>
+            {filtered.length === 0 ? <tr><td colSpan={5}><div className="empty">No audit logs yet</div></td></tr> :
+              filtered.map(log => (
+                <tr key={log.id}>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{new Date(log.createdAt).toLocaleString()}</td>
+                  <td><span className={`badge-pill ${actionClass(log.action)}`}>{log.action}</span></td>
+                  <td style={{ color: "var(--text)", fontWeight: 600 }}>{log.summary}</td>
+                  <td>
+                    <div style={{ color: "var(--text2)" }}>{log.actorName || "System"}</div>
+                    {log.actorRole && <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--text3)" }}>{ROLE_LABELS[log.actorRole] || log.actorRole}</div>}
+                  </td>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{log.entityType}{log.entityId ? ` #${log.entityId}` : ""}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
 // ─── SETTINGS ────────────────────────────────────────────────────────────────
 function BusinessSettings({ businessProfile, license, user, onSaveProfile, onSaveLicense }) {
   const [form, setForm] = useState(businessProfile || DEFAULT_BUSINESS_PROFILE);
@@ -1632,6 +1685,7 @@ export default function App() {
   const [txns, setTxns] = useState([]);
   const [businessProfile, setBusinessProfile] = useState(DEFAULT_BUSINESS_PROFILE);
   const [license, setLicense] = useState(user?.license || DEFAULT_LICENSE);
+  const [auditLogs, setAuditLogs] = useState([]);
   const [page, setPage] = useState("dashboard");
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -1659,6 +1713,11 @@ export default function App() {
       if (hasPermission(user, "manageUsers")) {
         const usersData = await api.get("/users");
         setUsers(usersData);
+      }
+
+      if (hasPermission(user, "manageData")) {
+        const logsData = await api.get("/audit");
+        setAuditLogs(logsData);
       }
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -1837,6 +1896,7 @@ export default function App() {
     { id: "users", label: "Users", icon: I.users, show: canManageUsers },
     { id: "transactions", label: "Transactions", icon: I.txn, show: canViewAllTransactions },
     { id: "data", label: "Data Tools", icon: I.chart, show: canViewAllTransactions },
+    { id: "audit", label: "Audit Logs", icon: I.eye, show: canManageData },
     { id: "sell", label: "Make a Sale", icon: I.sell, show: canSell },
     { id: "receipts", label: "Receipts", icon: I.txn, show: !canViewAllTransactions && canPrint },
     { id: "store", label: "Store Items", icon: I.items, show: !canManageInventory && hasPermission(user, "viewInventory") },
@@ -1844,7 +1904,7 @@ export default function App() {
     { id: "settings", label: "Settings", icon: I.settings, show: canManageSettings },
   ].filter(item => item.show);
 
-  const topbarTitles = { dashboard: "Dashboard", inventory: "Inventory", users: "Users", transactions: "Transactions", data: "Data Tools", sell: "Make a Sale", receipts: "Receipts", store: "Store Items", account: "Account", settings: "Settings" };
+  const topbarTitles = { dashboard: "Dashboard", inventory: "Inventory", users: "Users", transactions: "Transactions", data: "Data Tools", audit: "Audit Logs", sell: "Make a Sale", receipts: "Receipts", store: "Store Items", account: "Account", settings: "Settings" };
 
   return (
     <div className="app">
@@ -1903,6 +1963,7 @@ export default function App() {
           {page === "users" && canManageUsers && <AdminUsers users={users} currentUser={user} onAdd={handleAddUser} onEdit={handleEditUser} onDelete={handleDeleteUser} onToggle={handleToggleUser} onResetPassword={handleResetPassword} />}
           {page === "transactions" && canViewAllTransactions && <AdminTransactions txns={txns} onPrintReceipt={handlePrintReceipt} canPrint={canPrint} />}
           {page === "data" && canViewAllTransactions && <AdminDataTools txns={txns} onClearHistory={handleClearHistory} onResetFresh={handleResetFresh} onResetDemo={handleResetDemo} canManageData={canManageData} />}
+          {page === "audit" && canManageData && <AdminAuditLogs logs={auditLogs} />}
           {page === "settings" && canManageSettings && <BusinessSettings key={`${JSON.stringify(businessProfile)}-${JSON.stringify(license)}`} businessProfile={businessProfile} license={license} user={user} onSaveProfile={handleSaveBusinessProfile} onSaveLicense={handleSaveLicense} />}
           {page === "account" && <AccountSecurity user={user} onChangePassword={handleChangePassword} />}
           {page === "sell" && canSell && <UserSell items={items} onSell={handleSell} onPrintReceipt={handlePrintReceipt} />}
