@@ -171,6 +171,13 @@ router.post("/:id/reset-password", async (req, res) => {
 
   saveCollection("users", db.users);
 
+  db.refreshTokens = (db.refreshTokens || []).map(token =>
+    token.userId === userId && token.instanceId === req.user.instanceId && !token.revokedAt
+      ? { ...token, revokedAt: new Date().toISOString() }
+      : token
+  );
+  saveCollection("refreshTokens", db.refreshTokens);
+
   res.json({ message: "Password reset successfully" });
 });
 
@@ -191,6 +198,13 @@ router.delete("/:id", (req, res) => {
 
   db.users.splice(index, 1);
   saveCollection("users", db.users);
+
+  db.refreshTokens = (db.refreshTokens || []).map(token =>
+    token.userId === userId && token.instanceId === req.user.instanceId && !token.revokedAt
+      ? { ...token, revokedAt: new Date().toISOString() }
+      : token
+  );
+  saveCollection("refreshTokens", db.refreshTokens);
 
   res.json({ message: "User deleted successfully" });
 });

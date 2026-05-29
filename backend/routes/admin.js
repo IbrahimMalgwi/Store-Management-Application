@@ -48,11 +48,13 @@ router.post("/reset", async (req, res) => {
       ...db.notifications.filter(notification => notification.instanceId !== req.user.instanceId),
       ...seed.notifications.map(notification => ({ ...notification, instanceId: req.user.instanceId })),
     ];
+    const refreshTokens = (db.refreshTokens || []).filter(token => token.instanceId !== req.user.instanceId);
 
     saveCollection("items", items);
     saveCollection("users", users);
     saveCollection("txns", txns);
     saveCollection("notifications", notifications);
+    saveCollection("refreshTokens", refreshTokens);
 
     return res.json({ message: "Demo data restored", data: { items, users, txns, notifications } });
   }
@@ -64,11 +66,13 @@ router.post("/reset", async (req, res) => {
   ];
   const txns = db.txns.filter(txn => txn.instanceId !== req.user.instanceId);
   const notifications = db.notifications.filter(notification => notification.instanceId !== req.user.instanceId);
+  const refreshTokens = (db.refreshTokens || []).filter(token => token.instanceId !== req.user.instanceId);
 
   saveCollection("items", items);
   saveCollection("users", users);
   saveCollection("txns", txns);
   saveCollection("notifications", notifications);
+  saveCollection("refreshTokens", refreshTokens);
 
   res.json({ message: "Data cleared. Current admin account was kept.", data: { items, users, txns, notifications } });
 });

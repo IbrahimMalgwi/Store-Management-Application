@@ -1762,7 +1762,12 @@ export default function App() {
     return result;
   };
 
-  const handleChangePassword = async (form) => api.put("/auth/password", form);
+  const handleChangePassword = async (form) => {
+    const result = await api.put("/auth/password", form);
+    await logout();
+    setPage("dashboard");
+    return result;
+  };
 
   const handlePrintReceipt = async (receipt, copyType = "both") => {
     const printWindow = window.open("", "_blank", "width=900,height=700");
@@ -1799,7 +1804,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    logout();
+    void logout();
     setPage("dashboard");
     setNotifOpen(false);
   };
