@@ -17,8 +17,8 @@ const fallbackBusinessProfile = (profile) => ({
   email: profile?.email || "",
 });
 
-const findReceiptTransactions = (db, receiptId) =>
-  db.txns.filter(t => t.saleId === receiptId || String(t.id) === String(receiptId));
+const findReceiptTransactions = (db, receiptId, instanceId) =>
+  db.txns.filter(t => t.instanceId === instanceId && (t.saleId === receiptId || String(t.id) === String(receiptId)));
 
 const canAccessReceipt = (req, txns) =>
   req.user.role === "admin" || txns.every(t => t.userId === req.user.id);
@@ -26,10 +26,11 @@ const canAccessReceipt = (req, txns) =>
 // GET transactions (Admin sees all, User sees only their own)
 router.get("/", authenticateToken, (req, res) => {
   const db = getDB();
+  const instanceTxns = db.txns.filter(t => t.instanceId === req.user.instanceId);
   if (req.user.role === "admin") {
-    res.json(db.txns);
+    res.json(instanceTxns);
   } else {
-    const userTxns = db.txns.filter(t => t.userId === req.user.id);
+    const userTxns = instanceTxns.filter(t => t.userId === req.user.id);
     res.json(userTxns);
   }
 });
@@ -48,7 +49,8 @@ router.post("/", authenticateToken, (req, res) => {
   }
 
   const db = getDB();
-  const businessProfile = fallbackBusinessProfile(db.businessProfile);
+  const instance = db.instances.find(item => item.id === req.user.instanceId);
+  const businessProfile = fallbackBusinessProfile(instance?.businessProfile);
   const now = new Date();
   const date = now.toISOString().split("T")[0];
   const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
@@ -56,7 +58,7 @@ router.post("/", authenticateToken, (req, res) => {
 
   // First check all items for stock availability
   for (const cartItem of cartItems) {
-    const item = db.items.find(i => i.id === Number(cartItem.id));
+    const item = db.items.find(i => i.id === Number(cartItem.id) && i.instanceId === req.user.instanceId);
     if (!item) {
       return res.status(404).json({ message: `Item with ID ${cartItem.id} not found` });
     }
@@ -70,10 +72,11 @@ router.post("/", authenticateToken, (req, res) => {
   // Process deduction and transaction creation
   db.items = db.items.map(item => {
     const cartItem = cartItems.find(c => Number(c.id) === item.id);
-    if (cartItem) {
+    if (item.instanceId === req.user.instanceId && cartItem) {
       // Create transaction record
       newTxns.push({
         id: Date.now() + Math.random(),
+        instanceId: req.user.instanceId,
         saleId,
         receiptNo: saleId,
         itemId: item.id,
@@ -124,14 +127,14 @@ router.post("/", authenticateToken, (req, res) => {
       userName: req.user.name,
       receiptPrinted: false,
     },
-    items: db.items
+    items: db.items.filter(item => item.instanceId === req.user.instanceId)
   });
 });
 
 // POST mark receipt as printed. Users can print a receipt once; admins can print without consuming that user print.
 router.post("/:receiptId/print", authenticateToken, (req, res) => {
   const db = getDB();
-  const receiptTxns = findReceiptTransactions(db, req.params.receiptId);
+  const receiptTxns = findReceiptTransactions(db, req.params.receiptId, req.user.instanceId);
 
   if (receiptTxns.length === 0) {
     return res.status(404).json({ message: "Receipt not found" });
@@ -161,7 +164,7 @@ router.post("/:receiptId/print", authenticateToken, (req, res) => {
     saveCollection("txns", db.txns);
   }
 
-  const updatedReceiptTxns = findReceiptTransactions(db, req.params.receiptId);
+  const updatedReceiptTxns = findReceiptTransactions(db, req.params.receiptId, req.user.instanceId);
   res.json({
     message: "Receipt print allowed",
     receiptPrinted: updatedReceiptTxns.some(t => t.receiptPrinted),

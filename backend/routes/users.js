@@ -19,7 +19,9 @@ router.get("/", (req, res) => {
   // So we return users without password or with dummy passwords, but to make the code changes to the frontend minimal:
   // we can return users and if the user password field in request matches the DB or is a placeholder, we don't re-hash it.
   // Let's return users. For the password field, we can return a placeholder like "******".
-  const safeUsers = db.users.map(u => ({ ...u, password: "●●●●●●" }));
+  const safeUsers = db.users
+    .filter(user => user.instanceId === req.user.instanceId)
+    .map(u => ({ ...u, password: "●●●●●●" }));
   res.json(safeUsers);
 });
 
@@ -34,7 +36,7 @@ router.post("/", async (req, res) => {
   const db = getDB();
 
   // Check if email already taken
-  if (db.users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
+  if (db.users.find(u => u.instanceId === req.user.instanceId && u.email.toLowerCase() === email.toLowerCase())) {
     return res.status(400).json({ message: "A user with this email already exists" });
   }
 
@@ -43,6 +45,7 @@ router.post("/", async (req, res) => {
 
   const newUser = {
     id: Date.now(),
+    instanceId: req.user.instanceId,
     name,
     email,
     password: hashedPassword,
@@ -68,14 +71,14 @@ router.put("/:id", async (req, res) => {
   }
 
   const db = getDB();
-  const index = db.users.findIndex(u => u.id === userId);
+  const index = db.users.findIndex(u => u.id === userId && u.instanceId === req.user.instanceId);
 
   if (index === -1) {
     return res.status(404).json({ message: "User not found" });
   }
 
   // Check if email taken by another user
-  const emailExists = db.users.find(u => u.email.toLowerCase() === email.toLowerCase() && u.id !== userId);
+  const emailExists = db.users.find(u => u.instanceId === req.user.instanceId && u.email.toLowerCase() === email.toLowerCase() && u.id !== userId);
   if (emailExists) {
     return res.status(400).json({ message: "A user with this email already exists" });
   }
@@ -113,7 +116,7 @@ router.delete("/:id", (req, res) => {
   }
 
   const db = getDB();
-  const index = db.users.findIndex(u => u.id === userId);
+  const index = db.users.findIndex(u => u.id === userId && u.instanceId === req.user.instanceId);
 
   if (index === -1) {
     return res.status(404).json({ message: "User not found" });

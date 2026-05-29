@@ -1,6 +1,7 @@
 import express from "express";
-import { getDB, replaceDB, resetToSeed, saveCollection } from "../db.js";
+import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, requireAdmin } from "../middleware/auth.js";
+import { createSeedData } from "../src/database/seed.js";
 
 const router = express.Router();
 
@@ -8,40 +9,68 @@ router.use(authenticateToken, requireAdmin);
 
 router.delete("/history", (req, res) => {
   const db = getDB();
-  const items = db.items.map(item => ({ ...item, sold: 0 }));
+  const items = db.items.map(item => item.instanceId === req.user.instanceId ? ({ ...item, sold: 0 }) : item);
+  const txns = db.txns.filter(txn => txn.instanceId !== req.user.instanceId);
+  const notifications = db.notifications.filter(notification => notification.instanceId !== req.user.instanceId);
 
-  saveCollection("txns", []);
-  saveCollection("notifications", []);
+  saveCollection("txns", txns);
+  saveCollection("notifications", notifications);
   saveCollection("items", items);
 
-  res.json({ message: "Sales history deleted", txns: 0, notifications: 0, items });
+  res.json({ message: "Sales history deleted", txns: 0, notifications: 0, items: items.filter(item => item.instanceId === req.user.instanceId) });
 });
 
 router.post("/reset", async (req, res) => {
   const mode = req.body?.mode || "fresh";
-
-  if (mode === "seed") {
-    const nextData = await resetToSeed();
-    return res.json({ message: "Demo data restored", data: nextData });
-  }
-
   const db = getDB();
-  const currentAdmin = db.users.find(user => user.id === req.user.id);
+  const currentAdmin = db.users.find(user => user.id === req.user.id && user.instanceId === req.user.instanceId);
 
   if (!currentAdmin) {
     return res.status(400).json({ message: "Current admin account could not be found" });
   }
 
-  const freshData = {
-    businessProfile: db.businessProfile,
-    items: [],
-    users: [{ ...currentAdmin, role: "admin", active: true }],
-    txns: [],
-    notifications: [],
-  };
+  if (mode === "seed") {
+    const seed = await createSeedData();
+    const items = [
+      ...db.items.filter(item => item.instanceId !== req.user.instanceId),
+      ...seed.items.map(item => ({ ...item, instanceId: req.user.instanceId })),
+    ];
+    const users = [
+      ...db.users.filter(user => user.instanceId !== req.user.instanceId),
+      { ...currentAdmin, role: "admin", active: true },
+      ...seed.users.filter(user => user.role !== "admin").map(user => ({ ...user, instanceId: req.user.instanceId })),
+    ];
+    const txns = [
+      ...db.txns.filter(txn => txn.instanceId !== req.user.instanceId),
+      ...seed.txns.map(txn => ({ ...txn, instanceId: req.user.instanceId })),
+    ];
+    const notifications = [
+      ...db.notifications.filter(notification => notification.instanceId !== req.user.instanceId),
+      ...seed.notifications.map(notification => ({ ...notification, instanceId: req.user.instanceId })),
+    ];
 
-  replaceDB(freshData);
-  res.json({ message: "Data cleared. Current admin account was kept.", data: freshData });
+    saveCollection("items", items);
+    saveCollection("users", users);
+    saveCollection("txns", txns);
+    saveCollection("notifications", notifications);
+
+    return res.json({ message: "Demo data restored", data: { items, users, txns, notifications } });
+  }
+
+  const items = db.items.filter(item => item.instanceId !== req.user.instanceId);
+  const users = [
+    ...db.users.filter(user => user.instanceId !== req.user.instanceId),
+    { ...currentAdmin, role: "admin", active: true },
+  ];
+  const txns = db.txns.filter(txn => txn.instanceId !== req.user.instanceId);
+  const notifications = db.notifications.filter(notification => notification.instanceId !== req.user.instanceId);
+
+  saveCollection("items", items);
+  saveCollection("users", users);
+  saveCollection("txns", txns);
+  saveCollection("notifications", notifications);
+
+  res.json({ message: "Data cleared. Current admin account was kept.", data: { items, users, txns, notifications } });
 });
 
 export default router;

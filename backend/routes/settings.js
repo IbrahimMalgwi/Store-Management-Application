@@ -15,7 +15,13 @@ router.use(authenticateToken);
 
 router.get("/business-profile", (req, res) => {
   const db = getDB();
-  res.json(db.businessProfile);
+  const instance = db.instances.find(item => item.id === req.user.instanceId);
+
+  if (!instance) {
+    return res.status(404).json({ message: "Instance not found" });
+  }
+
+  res.json(instance.businessProfile);
 });
 
 router.put("/business-profile", requireAdmin, (req, res) => {
@@ -26,8 +32,18 @@ router.put("/business-profile", requireAdmin, (req, res) => {
   }
 
   const db = getDB();
-  db.businessProfile = profile;
-  saveCollection("businessProfile", profile);
+  const index = db.instances.findIndex(instance => instance.id === req.user.instanceId);
+
+  if (index === -1) {
+    return res.status(404).json({ message: "Instance not found" });
+  }
+
+  db.instances[index] = {
+    ...db.instances[index],
+    businessProfile: profile,
+  };
+
+  saveCollection("instances", db.instances);
 
   res.json({
     message: "Business profile updated",

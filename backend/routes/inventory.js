@@ -7,7 +7,7 @@ const router = express.Router();
 // GET all items (Admins see all, Users see all)
 router.get("/", authenticateToken, (req, res) => {
   const db = getDB();
-  res.json(db.items);
+  res.json(db.items.filter(item => item.instanceId === req.user.instanceId));
 });
 
 // POST add new item (Admin only)
@@ -19,14 +19,16 @@ router.post("/", authenticateToken, requireAdmin, (req, res) => {
   }
 
   const db = getDB();
+  const instanceItems = db.items.filter(item => item.instanceId === req.user.instanceId);
 
   // Check if SKU already exists
-  if (db.items.find(i => i.sku.toLowerCase() === sku.toLowerCase())) {
+  if (instanceItems.find(i => i.sku.toLowerCase() === sku.toLowerCase())) {
     return res.status(400).json({ message: "An item with this SKU already exists" });
   }
 
   const newItem = {
     id: Date.now(),
+    instanceId: req.user.instanceId,
     sku,
     name,
     qty: Number(qty),
@@ -67,7 +69,7 @@ router.post("/bulk", authenticateToken, requireAdmin, (req, res) => {
       return;
     }
 
-    const existing = db.items.find(item => item.sku.toLowerCase() === sku.toLowerCase());
+    const existing = db.items.find(item => item.instanceId === req.user.instanceId && item.sku.toLowerCase() === sku.toLowerCase());
 
     if (existing) {
       existing.name = name;
@@ -80,6 +82,7 @@ router.post("/bulk", authenticateToken, requireAdmin, (req, res) => {
 
     db.items.push({
       id: Date.now() + index,
+      instanceId: req.user.instanceId,
       sku,
       name,
       qty,
@@ -95,7 +98,7 @@ router.post("/bulk", authenticateToken, requireAdmin, (req, res) => {
   }
 
   saveCollection("items", db.items);
-  res.status(201).json({ message: "Bulk stock import completed", created, updated, total: items.length, items: db.items });
+  res.status(201).json({ message: "Bulk stock import completed", created, updated, total: items.length, items: db.items.filter(item => item.instanceId === req.user.instanceId) });
 });
 
 // PUT update item (Admin only)
@@ -108,14 +111,14 @@ router.put("/:id", authenticateToken, requireAdmin, (req, res) => {
   }
 
   const db = getDB();
-  const index = db.items.findIndex(i => i.id === itemId);
+  const index = db.items.findIndex(i => i.id === itemId && i.instanceId === req.user.instanceId);
 
   if (index === -1) {
     return res.status(404).json({ message: "Item not found" });
   }
 
   // Check if SKU is taken by another item
-  const existingSkuItem = db.items.find(i => i.sku.toLowerCase() === sku.toLowerCase() && i.id !== itemId);
+  const existingSkuItem = db.items.find(i => i.instanceId === req.user.instanceId && i.sku.toLowerCase() === sku.toLowerCase() && i.id !== itemId);
   if (existingSkuItem) {
     return res.status(400).json({ message: "An item with this SKU already exists" });
   }
@@ -139,7 +142,7 @@ router.put("/:id", authenticateToken, requireAdmin, (req, res) => {
 router.delete("/:id", authenticateToken, requireAdmin, (req, res) => {
   const itemId = Number(req.params.id);
   const db = getDB();
-  const index = db.items.findIndex(i => i.id === itemId);
+  const index = db.items.findIndex(i => i.id === itemId && i.instanceId === req.user.instanceId);
 
   if (index === -1) {
     return res.status(404).json({ message: "Item not found" });

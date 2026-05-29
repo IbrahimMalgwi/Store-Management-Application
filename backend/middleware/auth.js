@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { DEFAULT_INSTANCE_ID } from "../src/database/seed.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "stockos_secret_key_123";
 
@@ -14,7 +15,10 @@ export const authenticateToken = (req, res, next) => {
     if (err) {
       return res.status(403).json({ message: "Invalid or expired token" });
     }
-    req.user = user;
+    req.user = {
+      ...user,
+      instanceId: user.instanceId || DEFAULT_INSTANCE_ID,
+    };
     next();
   });
 };

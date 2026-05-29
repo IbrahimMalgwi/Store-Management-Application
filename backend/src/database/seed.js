@@ -22,6 +22,18 @@ export const DEFAULT_BUSINESS_PROFILE = {
   email: "Update email address",
 };
 
+export const DEFAULT_INSTANCE_ID = "default-instance";
+
+export const DEFAULT_INSTANCE = {
+  id: DEFAULT_INSTANCE_ID,
+  name: "Default Store",
+  slug: "default",
+  businessProfile: { ...DEFAULT_BUSINESS_PROFILE },
+  plan: "standalone",
+  active: true,
+  createdAt: "2024-01-10",
+};
+
 const SEED_USERS = [
   { id: 1, name: "Admin User", email: "admin@store.com", password: "admin123", role: "admin", createdAt: "2024-01-10", active: true },
   { id: 2, name: "Jane Doe", email: "jane@store.com", password: "user123", role: "user", createdAt: "2024-02-14", active: true },
@@ -47,6 +59,7 @@ const createSeedTransactions = (users, items) => {
 
       txns.push({
         id: id++,
+        instanceId: DEFAULT_INSTANCE_ID,
         itemId: item.id,
         itemName: item.name,
         sku: item.sku,
@@ -67,7 +80,7 @@ const createSeedUsers = async () => Promise.all(
   SEED_USERS.map(async (user) => {
     const salt = await bcrypt.genSalt(10);
     const password = await bcrypt.hash(user.password, salt);
-    return { ...user, password };
+    return { ...user, password, instanceId: DEFAULT_INSTANCE_ID };
   })
 );
 
@@ -75,10 +88,11 @@ export const createSeedData = async () => {
   const users = await createSeedUsers();
 
   return {
+    instances: [{ ...DEFAULT_INSTANCE, businessProfile: { ...DEFAULT_BUSINESS_PROFILE } }],
     businessProfile: { ...DEFAULT_BUSINESS_PROFILE },
-    items: SEED_ITEMS,
+    items: SEED_ITEMS.map(item => ({ ...item, instanceId: DEFAULT_INSTANCE_ID })),
     users,
     txns: createSeedTransactions(users, SEED_ITEMS),
-    notifications: SEED_NOTIFICATIONS,
+    notifications: SEED_NOTIFICATIONS.map(notification => ({ ...notification, instanceId: DEFAULT_INSTANCE_ID })),
   };
 };

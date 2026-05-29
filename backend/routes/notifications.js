@@ -10,7 +10,7 @@ router.use(authenticateToken);
 // GET notifications
 router.get("/", (req, res) => {
   const db = getDB();
-  res.json(db.notifications);
+  res.json(db.notifications.filter(notification => notification.instanceId === req.user.instanceId));
 });
 
 // POST add notification
@@ -24,6 +24,7 @@ router.post("/", (req, res) => {
   const db = getDB();
   const newNotif = {
     id: Date.now(),
+    instanceId: req.user.instanceId,
     message,
     time: time || new Date().toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" }) + " today",
     unread: true
@@ -38,10 +39,10 @@ router.post("/", (req, res) => {
 // POST mark all read
 router.post("/mark-read", (req, res) => {
   const db = getDB();
-  db.notifications = db.notifications.map(n => ({ ...n, unread: false }));
+  db.notifications = db.notifications.map(n => n.instanceId === req.user.instanceId ? ({ ...n, unread: false }) : n);
   saveCollection("notifications", db.notifications);
 
-  res.json({ message: "All notifications marked as read", notifications: db.notifications });
+  res.json({ message: "All notifications marked as read", notifications: db.notifications.filter(notification => notification.instanceId === req.user.instanceId) });
 });
 
 export default router;
