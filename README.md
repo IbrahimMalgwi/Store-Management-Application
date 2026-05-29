@@ -4,7 +4,7 @@ Store Management Application is a React and Express inventory, sales, receipt, a
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 24 or newer
 - npm
 
 ## Setup
@@ -44,7 +44,8 @@ The backend runs at `http://localhost:5000`.
 ## Important Local Files
 
 - `backend/.env` contains local secrets and must not be committed.
-- `backend/data/db.json` contains local runtime data and must not be committed.
+- `backend/data/store.sqlite` contains local runtime data and must not be committed.
+- `backend/data/db.json` is only used as a legacy migration source if it exists.
 - `sample-item-upload.xlsx` is a sample inventory upload file.
 
 ## Improvement Roadmap

@@ -19,6 +19,10 @@ build/
 
 # Runtime data
 backend/data/db.json
+backend/data/*.db
+backend/data/*.sqlite
+backend/data/*.sqlite-shm
+backend/data/*.sqlite-wal
 backend/data/*.tmp
 backend/data/*.bak
 

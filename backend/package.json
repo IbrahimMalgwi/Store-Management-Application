@@ -4,6 +4,9 @@
   "description": "StockOS Backend Service",
   "main": "server.js",
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"

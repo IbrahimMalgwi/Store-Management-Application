@@ -1,1 +1,1 @@
-export { getDB, initDB, replaceDB, resetToSeed, saveCollection } from "./src/database/jsonStore.js";
+export { getDB, getDatabaseFile, initDB, replaceDB, resetToSeed, saveCollection } from "./src/database/sqliteStore.js";

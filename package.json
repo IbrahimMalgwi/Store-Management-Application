@@ -2,6 +2,9 @@
   "name": "stockos-store-management",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend",
     "backend": "npm run dev --prefix backend",
