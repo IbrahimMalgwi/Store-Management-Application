@@ -449,6 +449,20 @@ textarea { resize: vertical; min-height: 80px; }
 
 /* ── Settings ── */
 .settings-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr); gap: 14px; align-items: start; }
+.license-summary {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+  margin-bottom: 16px;
+}
+.license-summary div {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px;
+}
+.license-summary span {
+  display: block; color: var(--text3); font-family: var(--mono);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 5px;
+}
+.license-summary strong { color: var(--text); font-size: 13px; text-transform: capitalize; }
 .receipt-preview { padding: 22px; color: var(--text2); font-size: 12px; line-height: 1.6; }
 .receipt-preview h3 { color: var(--text); font-size: 18px; font-weight: 800; margin-bottom: 4px; }
 .receipt-preview strong { color: var(--text); }
@@ -474,6 +488,7 @@ textarea { resize: vertical; min-height: 80px; }
   .stat-grid { grid-template-columns: 1fr; }
   .section-header { align-items: stretch; flex-direction: column; gap: 10px; }
   .form-row { grid-template-columns: 1fr; }
+  .license-summary { grid-template-columns: 1fr; }
   .table-card { overflow-x: auto; }
   .search-wrap input { width: 100% !important; }
 }

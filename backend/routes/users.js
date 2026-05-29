@@ -1,12 +1,15 @@
 import express from "express";
 import bcrypt from "bcryptjs";
 import { getDB, saveCollection } from "../db.js";
-import { authenticateToken, requireAdmin } from "../middleware/auth.js";
+import { authenticateToken, normalizeRole, requirePermission } from "../middleware/auth.js";
+import { hasSeatCapacity } from "../src/license.js";
 
 const router = express.Router();
 
 // Apply admin protection to all routes in this file
-router.use(authenticateToken, requireAdmin);
+router.use(authenticateToken, requirePermission("manageUsers"));
+
+const VALID_ROLES = ["owner", "manager", "cashier", "viewer"];
 
 // GET all users
 router.get("/", (req, res) => {
@@ -28,12 +31,23 @@ router.get("/", (req, res) => {
 // POST add new user
 router.post("/", async (req, res) => {
   const { name, email, password, role, active } = req.body;
+  const normalizedRole = normalizeRole(role);
 
-  if (!name || !email || !password || !role) {
+  if (!name || !email || !password || !normalizedRole) {
     return res.status(400).json({ message: "Name, email, password, and role are required" });
   }
 
+  if (!VALID_ROLES.includes(normalizedRole)) {
+    return res.status(400).json({ message: "Invalid role selected" });
+  }
+
   const db = getDB();
+  const instance = db.instances.find(item => item.id === req.user.instanceId);
+  const activeUserCount = db.users.filter(u => u.instanceId === req.user.instanceId && u.active).length;
+
+  if ((active === undefined || active) && !hasSeatCapacity(instance?.license, activeUserCount)) {
+    return res.status(403).json({ message: "This license has reached its active user seat limit" });
+  }
 
   // Check if email already taken
   if (db.users.find(u => u.instanceId === req.user.instanceId && u.email.toLowerCase() === email.toLowerCase())) {
@@ -49,7 +63,7 @@ router.post("/", async (req, res) => {
     name,
     email,
     password: hashedPassword,
-    role,
+    role: normalizedRole,
     createdAt: new Date().toISOString().split("T")[0],
     active: active !== undefined ? active : true,
   };
@@ -65,9 +79,14 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   const userId = Number(req.params.id);
   const { name, email, password, role, active } = req.body;
+  const normalizedRole = normalizeRole(role);
 
-  if (!name || !email || !role) {
+  if (!name || !email || !normalizedRole) {
     return res.status(400).json({ message: "Name, email, and role are required" });
+  }
+
+  if (!VALID_ROLES.includes(normalizedRole)) {
+    return res.status(400).json({ message: "Invalid role selected" });
   }
 
   const db = getDB();
@@ -84,6 +103,14 @@ router.put("/:id", async (req, res) => {
   }
 
   const existingUser = db.users[index];
+  const instance = db.instances.find(item => item.id === req.user.instanceId);
+  const activeUserCount = db.users.filter(u => u.instanceId === req.user.instanceId && u.active && u.id !== userId).length;
+  const nextActive = active !== undefined ? active : existingUser.active;
+
+  if (nextActive && !hasSeatCapacity(instance?.license, activeUserCount)) {
+    return res.status(403).json({ message: "This license has reached its active user seat limit" });
+  }
+
   let updatedPassword = existingUser.password;
 
   // Hash new password if it is provided and is NOT the placeholder
@@ -97,7 +124,7 @@ router.put("/:id", async (req, res) => {
     name,
     email,
     password: updatedPassword,
-    role,
+    role: normalizedRole,
     active: active !== undefined ? active : existingUser.active,
   };
 

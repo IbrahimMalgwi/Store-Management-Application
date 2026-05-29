@@ -1,6 +1,6 @@
 import express from "express";
 import { getDB, saveCollection } from "../db.js";
-import { authenticateToken } from "../middleware/auth.js";
+import { authenticateToken, hasPermission, requirePermission } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -21,13 +21,13 @@ const findReceiptTransactions = (db, receiptId, instanceId) =>
   db.txns.filter(t => t.instanceId === instanceId && (t.saleId === receiptId || String(t.id) === String(receiptId)));
 
 const canAccessReceipt = (req, txns) =>
-  req.user.role === "admin" || txns.every(t => t.userId === req.user.id);
+  hasPermission(req.user.role, "viewAllTransactions") || txns.every(t => t.userId === req.user.id);
 
 // GET transactions (Admin sees all, User sees only their own)
 router.get("/", authenticateToken, (req, res) => {
   const db = getDB();
   const instanceTxns = db.txns.filter(t => t.instanceId === req.user.instanceId);
-  if (req.user.role === "admin") {
+  if (hasPermission(req.user.role, "viewAllTransactions")) {
     res.json(instanceTxns);
   } else {
     const userTxns = instanceTxns.filter(t => t.userId === req.user.id);
@@ -36,7 +36,7 @@ router.get("/", authenticateToken, (req, res) => {
 });
 
 // POST create transaction (Make a sale)
-router.post("/", authenticateToken, (req, res) => {
+router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
   const { cartItems, customer } = req.body;
   const customerDetails = sanitizeCustomer(customer);
 
@@ -133,6 +133,10 @@ router.post("/", authenticateToken, (req, res) => {
 
 // POST mark receipt as printed. Users can print a receipt once; admins can print without consuming that user print.
 router.post("/:receiptId/print", authenticateToken, (req, res) => {
+  if (!hasPermission(req.user.role, "printReceipts")) {
+    return res.status(403).json({ message: "You do not have permission to print receipts" });
+  }
+
   const db = getDB();
   const receiptTxns = findReceiptTransactions(db, req.params.receiptId, req.user.instanceId);
 
@@ -144,11 +148,11 @@ router.post("/:receiptId/print", authenticateToken, (req, res) => {
     return res.status(403).json({ message: "You do not have access to this receipt" });
   }
 
-  if (req.user.role !== "admin" && receiptTxns.some(t => t.receiptPrinted)) {
+  if (!hasPermission(req.user.role, "reprintReceipts") && receiptTxns.some(t => t.receiptPrinted)) {
     return res.status(409).json({ message: "This receipt has already been printed" });
   }
 
-  if (req.user.role !== "admin") {
+  if (!hasPermission(req.user.role, "reprintReceipts")) {
     const printedAt = new Date().toISOString();
     db.txns = db.txns.map(txn => {
       if (receiptTxns.some(t => t.id === txn.id)) {

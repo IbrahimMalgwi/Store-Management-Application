@@ -1,6 +1,7 @@
 import express from "express";
 import { getDB, saveCollection } from "../db.js";
-import { authenticateToken, requireAdmin } from "../middleware/auth.js";
+import { authenticateToken, requirePermission } from "../middleware/auth.js";
+import { cleanLicenseInput, getLicenseAccess, LICENSE_MODES, LICENSE_PLANS, LICENSE_STATUSES } from "../src/license.js";
 
 const router = express.Router();
 
@@ -11,11 +12,12 @@ const cleanBusinessProfile = (profile = {}) => ({
   email: String(profile.email || "").trim(),
 });
 
+const getInstance = (instanceId) => getDB().instances.find(item => item.id === instanceId);
+
 router.use(authenticateToken);
 
 router.get("/business-profile", (req, res) => {
-  const db = getDB();
-  const instance = db.instances.find(item => item.id === req.user.instanceId);
+  const instance = getInstance(req.user.instanceId);
 
   if (!instance) {
     return res.status(404).json({ message: "Instance not found" });
@@ -24,7 +26,25 @@ router.get("/business-profile", (req, res) => {
   res.json(instance.businessProfile);
 });
 
-router.put("/business-profile", requireAdmin, (req, res) => {
+router.get("/license", (req, res) => {
+  const instance = getInstance(req.user.instanceId);
+
+  if (!instance) {
+    return res.status(404).json({ message: "Instance not found" });
+  }
+
+  res.json({
+    ...instance.license,
+    access: getLicenseAccess(instance.license),
+    options: {
+      modes: LICENSE_MODES,
+      plans: LICENSE_PLANS,
+      statuses: LICENSE_STATUSES,
+    },
+  });
+});
+
+router.put("/business-profile", requirePermission("manageSettings"), (req, res) => {
   const profile = cleanBusinessProfile(req.body);
 
   if (!profile.businessName || !profile.address || !profile.phone || !profile.email) {
@@ -48,6 +68,42 @@ router.put("/business-profile", requireAdmin, (req, res) => {
   res.json({
     message: "Business profile updated",
     businessProfile: profile,
+  });
+});
+
+router.put("/license", requirePermission("manageSettings"), (req, res) => {
+  const license = cleanLicenseInput(req.body);
+
+  if (license.mode === "saas" && !license.expiresAt) {
+    return res.status(400).json({ message: "SaaS licenses require an expiry date" });
+  }
+
+  const db = getDB();
+  const index = db.instances.findIndex(instance => instance.id === req.user.instanceId);
+
+  if (index === -1) {
+    return res.status(404).json({ message: "Instance not found" });
+  }
+
+  const activeUserCount = db.users.filter(user => user.instanceId === req.user.instanceId && user.active).length;
+  if (license.seats < activeUserCount) {
+    return res.status(400).json({ message: `Seat limit cannot be lower than the current ${activeUserCount} active users` });
+  }
+
+  db.instances[index] = {
+    ...db.instances[index],
+    plan: license.plan,
+    license,
+  };
+
+  saveCollection("instances", db.instances);
+
+  res.json({
+    message: "License settings updated",
+    license: {
+      ...license,
+      access: getLicenseAccess(license),
+    },
   });
 });
 

@@ -15,7 +15,54 @@ const DEFAULT_BUSINESS_PROFILE = {
   email: "",
 };
 
+const DEFAULT_LICENSE = {
+  mode: "standalone",
+  plan: "standalone",
+  status: "active",
+  seats: 10,
+  expiresAt: "",
+  licenseKey: "LOCAL-STANDALONE",
+};
+
 const RECEIPT_FOOTER = "Store Management Application powered by Ganzy-Malgwi Technologies, 08152546005, ganzymalgwitechnologies@gmail.com.";
+
+const LICENSE_LABELS = {
+  standalone: "Standalone",
+  saas: "SaaS",
+  trial: "Trial",
+  starter: "Starter",
+  professional: "Professional",
+  enterprise: "Enterprise",
+  active: "Active",
+  trialing: "Trialing",
+  past_due: "Past Due",
+  expired: "Expired",
+  suspended: "Suspended",
+};
+
+const LICENSE_STATUS_CLASS = {
+  active: "green",
+  trialing: "blue",
+  past_due: "orange",
+  expired: "red",
+  suspended: "gray",
+};
+
+const ROLE_LABELS = {
+  owner: "Owner",
+  manager: "Manager",
+  cashier: "Cashier",
+  viewer: "Viewer",
+};
+
+const ROLE_PERMISSIONS = {
+  owner: ["viewReports", "viewInventory", "manageInventory", "viewAllTransactions", "sell", "printReceipts", "reprintReceipts", "manageUsers", "manageSettings", "manageData"],
+  manager: ["viewReports", "viewInventory", "manageInventory", "viewAllTransactions", "sell", "printReceipts", "reprintReceipts"],
+  cashier: ["viewOwnReports", "viewInventory", "sell", "printReceipts"],
+  viewer: ["viewReports", "viewInventory", "viewAllTransactions"],
+};
+
+const hasPermission = (user, permission) => ROLE_PERMISSIONS[user?.role]?.includes(permission) || false;
 
 const getReceiptId = (txn) => txn.saleId || String(txn.id);
 
@@ -285,7 +332,6 @@ function PeriodRangeControl({ period, setPeriod, startDate, setStartDate, endDat
 // ─── LOGIN PAGE ──────────────────────────────────────────────────────────────
 function LoginPage() {
   const { login } = useAuth();
-  const [tab, setTab] = useState("admin");
   const [email, setEmail] = useState("admin@store.com");
   const [password, setPassword] = useState("admin123");
   const [error, setError] = useState("");
@@ -293,16 +339,15 @@ function LoginPage() {
   const handleLogin = async () => {
     try {
       setError("");
-      await login(email, password, tab);
+      await login(email, password);
     } catch (err) {
-      setError(err.message || "Invalid credentials or wrong role selected.");
+      setError(err.message || "Invalid credentials.");
     }
   };
 
-  const handleTabChange = (selectedTab) => {
-    setTab(selectedTab);
+  const fillDemo = (type) => {
     setError("");
-    if (selectedTab === "admin") {
+    if (type === "owner") {
       setEmail("admin@store.com");
       setPassword("admin123");
     } else {
@@ -323,8 +368,8 @@ function LoginPage() {
           </div>
         </div>
         <div className="login-tabs">
-          <button className={`login-tab ${tab === "admin" ? "active" : ""}`} onClick={() => handleTabChange("admin")}>Admin</button>
-          <button className={`login-tab ${tab === "user" ? "active" : ""}`} onClick={() => handleTabChange("user")}>User</button>
+          <button className="login-tab active" onClick={() => fillDemo("owner")}>Owner Demo</button>
+          <button className="login-tab" onClick={() => fillDemo("cashier")}>Cashier Demo</button>
         </div>
         {error && <div className="login-error">{error}</div>}
         <div className="form-group">
@@ -339,7 +384,7 @@ function LoginPage() {
           Sign In →
         </button>
         <p style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)", marginTop: 16, textAlign: "center" }}>
-          Admin: admin@store.com / admin123 &nbsp;|&nbsp; User: jane@store.com / user123
+          Owner: admin@store.com / admin123 &nbsp;|&nbsp; Cashier: jane@store.com / user123
         </p>
       </div>
     </div>
@@ -356,7 +401,7 @@ function AdminDashboard({ items, users, txns }) {
   const totalRevenue = filtered.reduce((s, t) => s + t.amount, 0);
   const totalSold = filtered.reduce((s, t) => s + t.qty, 0);
   const lowStock = items.filter(i => i.qty <= 5).length;
-  const activeUsers = users.filter(u => u.role === "user" && u.active).length;
+  const activeUsers = users.length ? users.filter(u => u.active).length : "—";
 
   const itemRevenue = {};
   filtered.forEach(t => {
@@ -411,7 +456,7 @@ function AdminDashboard({ items, users, txns }) {
         <div className="stat-card orange">
           <div className="stat-label">Active Users</div>
           <div className="stat-value" style={{ color: "var(--accent3)" }}>{activeUsers}</div>
-          <div className="stat-sub">{users.filter(u => u.role === "user").length} total users</div>
+          <div className="stat-sub">{users.length ? `${users.length} total users` : "owner-only detail"}</div>
           <div className="stat-icon">{I.users}</div>
         </div>
         <div className="stat-card red">
@@ -526,7 +571,7 @@ function AdminDashboard({ items, users, txns }) {
 }
 
 // ─── ADMIN: Inventory ────────────────────────────────────────────────────────
-function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport }) {
+function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport, readOnly = false }) {
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState(null); // null | "add" | "edit"
   const [importModal, setImportModal] = useState(false);
@@ -609,16 +654,16 @@ function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport }) {
             <span className="search-icon">{I.search}</span>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search items…" style={{ width: 200 }} />
           </div>
-          <button className="btn btn-secondary" onClick={() => setImportModal(true)}>Import Stock</button>
-          <button className="btn btn-primary" onClick={openAdd}>{I.add} Add Item</button>
+          {!readOnly && <button className="btn btn-secondary" onClick={() => setImportModal(true)}>Import Stock</button>}
+          {!readOnly && <button className="btn btn-primary" onClick={openAdd}>{I.add} Add Item</button>}
         </div>
       </div>
 
       <div className="table-card">
         <table>
-          <thead><tr><th>SKU</th><th>Name</th><th>Qty</th><th>Price</th><th>Sold</th><th>Description</th><th>Actions</th></tr></thead>
+          <thead><tr><th>SKU</th><th>Name</th><th>Qty</th><th>Price</th><th>Sold</th><th>Description</th>{!readOnly && <th>Actions</th>}</tr></thead>
           <tbody>
-            {filtered.length === 0 ? <tr><td colSpan={7}><div className="empty">No items found</div></td></tr> :
+            {filtered.length === 0 ? <tr><td colSpan={readOnly ? 6 : 7}><div className="empty">No items found</div></td></tr> :
               filtered.map(item => (
                 <tr key={item.id}>
                   <td><span className="badge-pill gray">{item.sku}</span></td>
@@ -629,12 +674,12 @@ function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport }) {
                   <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)" }}>{fmt(item.amount)}</td>
                   <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{item.sold}</td>
                   <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.description}</td>
-                  <td>
+                  {!readOnly && <td>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button className="btn btn-sm btn-secondary" onClick={() => openEdit(item)}>{I.edit}</button>
                       <button className="btn btn-sm btn-danger" onClick={() => del(item.id)}>{I.del}</button>
                     </div>
-                  </td>
+                  </td>}
                 </tr>
               ))}
           </tbody>
@@ -687,10 +732,10 @@ function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport }) {
 // ─── ADMIN: Users ─────────────────────────────────────────────────────────────
 function AdminUsers({ users, onAdd, onEdit, onDelete, onToggle }) {
   const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "user", active: true });
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "cashier", active: true });
   const [editId, setEditId] = useState(null);
 
-  const openAdd = () => { setForm({ name: "", email: "", password: "", role: "user", active: true }); setModal("add"); };
+  const openAdd = () => { setForm({ name: "", email: "", password: "", role: "cashier", active: true }); setModal("add"); };
   const openEdit = (u) => { setForm({ name: u.name, email: u.email, password: u.password, role: u.role, active: u.active }); setEditId(u.id); setModal("edit"); };
   
   const save = async () => {
@@ -740,7 +785,7 @@ function AdminUsers({ users, onAdd, onEdit, onDelete, onToggle }) {
               <tr key={u.id}>
                 <td style={{ color: "var(--text)", fontWeight: 600 }}>{u.name}</td>
                 <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{u.email}</td>
-                <td><span className={`badge-pill ${u.role === "admin" ? "purple" : "blue"}`}>{u.role}</span></td>
+                <td><span className={`badge-pill ${u.role === "owner" ? "purple" : u.role === "manager" ? "blue" : u.role === "viewer" ? "gray" : "green"}`}>{ROLE_LABELS[u.role] || u.role}</span></td>
                 <td style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{u.createdAt}</td>
                 <td>
                   <span className={`badge-pill ${u.active ? "green" : "gray"}`} style={{ cursor: "pointer" }} onClick={() => toggle(u)}>
@@ -771,8 +816,10 @@ function AdminUsers({ users, onAdd, onEdit, onDelete, onToggle }) {
             </div>
             <div className="form-group"><label>Role</label>
               <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-                <option value="user">User</option>
-                <option value="admin">Admin</option>
+                <option value="cashier">Cashier</option>
+                <option value="manager">Manager</option>
+                <option value="viewer">Viewer</option>
+                <option value="owner">Owner</option>
               </select>
             </div>
           </div>
@@ -789,7 +836,7 @@ function AdminUsers({ users, onAdd, onEdit, onDelete, onToggle }) {
 }
 
 // ─── ADMIN: Transactions ──────────────────────────────────────────────────────
-function AdminTransactions({ txns, onPrintReceipt }) {
+function AdminTransactions({ txns, onPrintReceipt, canPrint = false }) {
   const [search, setSearch] = useState("");
   const receipts = buildReceipts(txns);
   const query = search.toLowerCase();
@@ -829,11 +876,13 @@ function AdminTransactions({ txns, onPrintReceipt }) {
                   <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)" }}>{fmt(receipt.total)}</td>
                   <td><span className={`badge-pill ${receipt.receiptPrinted ? "green" : "orange"}`}>{receipt.receiptPrinted ? "User printed" : "Not printed"}</span></td>
                   <td>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      <button className="btn btn-sm btn-secondary" onClick={() => onPrintReceipt(receipt, "customer")}>Customer</button>
-                      <button className="btn btn-sm btn-secondary" onClick={() => onPrintReceipt(receipt, "record")}>Record</button>
-                      <button className="btn btn-sm btn-primary" onClick={() => onPrintReceipt(receipt, "both")}>Both</button>
-                    </div>
+                    {canPrint ? (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <button className="btn btn-sm btn-secondary" onClick={() => onPrintReceipt(receipt, "customer")}>Customer</button>
+                        <button className="btn btn-sm btn-secondary" onClick={() => onPrintReceipt(receipt, "record")}>Record</button>
+                        <button className="btn btn-sm btn-primary" onClick={() => onPrintReceipt(receipt, "both")}>Both</button>
+                      </div>
+                    ) : <span className="badge-pill gray">View only</span>}
                   </td>
                 </tr>
               ))}
@@ -845,7 +894,7 @@ function AdminTransactions({ txns, onPrintReceipt }) {
 }
 
 // ─── ADMIN: Data Tools ───────────────────────────────────────────────────────
-function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo }) {
+function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canManageData = false }) {
   const [period, setPeriod] = useState("daily");
   const [startDate, setStartDate] = useState(getStartDateForPeriod("daily"));
   const [endDate, setEndDate] = useState(todayString());
@@ -926,7 +975,7 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo }) {
         </div>
       </div>
 
-      <div className="table-card">
+      {canManageData && <div className="table-card">
         <div className="table-header"><h3>Reset and Delete Data</h3></div>
         <div style={{ padding: 20, display: "grid", gap: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
@@ -951,18 +1000,24 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo }) {
             <button className="btn btn-secondary" onClick={onResetDemo}>Restore Demo</button>
           </div>
         </div>
-      </div>
+      </div>}
     </>
   );
 }
 
 // ─── SETTINGS ────────────────────────────────────────────────────────────────
-function BusinessSettings({ businessProfile, user, onSave }) {
+function BusinessSettings({ businessProfile, license, user, onSaveProfile, onSaveLicense }) {
   const [form, setForm] = useState(businessProfile || DEFAULT_BUSINESS_PROFILE);
+  const [licenseForm, setLicenseForm] = useState(license || DEFAULT_LICENSE);
   const [saving, setSaving] = useState(false);
+  const [savingLicense, setSavingLicense] = useState(false);
 
   const update = (field, value) => {
     setForm(current => ({ ...current, [field]: value }));
+  };
+
+  const updateLicense = (field, value) => {
+    setLicenseForm(current => ({ ...current, [field]: value }));
   };
 
   const save = async () => {
@@ -973,7 +1028,7 @@ function BusinessSettings({ businessProfile, user, onSave }) {
 
     setSaving(true);
     try {
-      await onSave(form);
+      await onSaveProfile(form);
       alert("Business settings saved.");
     } catch (err) {
       alert(err.message || "Unable to save business settings");
@@ -982,10 +1037,27 @@ function BusinessSettings({ businessProfile, user, onSave }) {
     }
   };
 
+  const saveLicense = async () => {
+    if (licenseForm.mode === "saas" && !licenseForm.expiresAt) {
+      alert("SaaS licenses require an expiry date.");
+      return;
+    }
+
+    setSavingLicense(true);
+    try {
+      await onSaveLicense({ ...licenseForm, seats: Number(licenseForm.seats) });
+      alert("License settings saved.");
+    } catch (err) {
+      alert(err.message || "Unable to save license settings");
+    } finally {
+      setSavingLicense(false);
+    }
+  };
+
   return (
     <>
       <div className="section-header">
-        <h2>Business Settings</h2>
+        <h2>Instance Settings</h2>
       </div>
 
       <div className="settings-grid">
@@ -1011,6 +1083,77 @@ function BusinessSettings({ businessProfile, user, onSave }) {
               </div>
             </div>
             <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "Saving..." : "Save Settings"}</button>
+          </div>
+        </div>
+
+        <div className="table-card">
+          <div className="table-header">
+            <h3>Subscription and License</h3>
+            <span className={`badge-pill ${LICENSE_STATUS_CLASS[licenseForm.status] || "gray"}`}>
+              {LICENSE_LABELS[licenseForm.status] || licenseForm.status}
+            </span>
+          </div>
+          <div style={{ padding: 20 }}>
+            <div className="license-summary">
+              <div>
+                <span>Mode</span>
+                <strong>{LICENSE_LABELS[licenseForm.mode] || licenseForm.mode}</strong>
+              </div>
+              <div>
+                <span>Plan</span>
+                <strong>{LICENSE_LABELS[licenseForm.plan] || licenseForm.plan}</strong>
+              </div>
+              <div>
+                <span>Seats</span>
+                <strong>{licenseForm.seats}</strong>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Install Mode</label>
+                <select value={licenseForm.mode} onChange={e => updateLicense("mode", e.target.value)}>
+                  <option value="standalone">Standalone</option>
+                  <option value="saas">SaaS</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Plan</label>
+                <select value={licenseForm.plan} onChange={e => updateLicense("plan", e.target.value)}>
+                  <option value="standalone">Standalone</option>
+                  <option value="trial">Trial</option>
+                  <option value="starter">Starter</option>
+                  <option value="professional">Professional</option>
+                  <option value="enterprise">Enterprise</option>
+                </select>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Status</label>
+                <select value={licenseForm.status} onChange={e => updateLicense("status", e.target.value)}>
+                  <option value="active">Active</option>
+                  <option value="trialing">Trialing</option>
+                  <option value="past_due">Past Due</option>
+                  <option value="expired">Expired</option>
+                  <option value="suspended">Suspended</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Active User Seats</label>
+                <input type="number" min="1" value={licenseForm.seats} onChange={e => updateLicense("seats", e.target.value)} />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Expiry Date</label>
+                <input type="date" value={licenseForm.expiresAt || ""} onChange={e => updateLicense("expiresAt", e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>License Key</label>
+                <input value={licenseForm.licenseKey || ""} onChange={e => updateLicense("licenseKey", e.target.value)} placeholder="License key" />
+              </div>
+            </div>
+            <button className="btn btn-primary" onClick={saveLicense} disabled={savingLicense}>{savingLicense ? "Saving..." : "Save License"}</button>
           </div>
         </div>
 
@@ -1374,11 +1517,12 @@ function UserStore({ items }) {
 
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const { user, logout, loading } = useAuth();
+  const { user, logout, updateUser, loading } = useAuth();
   const [items, setItems] = useState([]);
   const [users, setUsers] = useState([]);
   const [txns, setTxns] = useState([]);
   const [businessProfile, setBusinessProfile] = useState(DEFAULT_BUSINESS_PROFILE);
+  const [license, setLicense] = useState(user?.license || DEFAULT_LICENSE);
   const [page, setPage] = useState("dashboard");
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -1400,7 +1544,10 @@ export default function App() {
       const profileData = await api.get("/settings/business-profile");
       setBusinessProfile(profileData);
 
-      if (user.role === "admin") {
+      const licenseData = await api.get("/settings/license");
+      setLicense(licenseData);
+
+      if (hasPermission(user, "manageUsers")) {
         const usersData = await api.get("/users");
         setUsers(usersData);
       }
@@ -1494,6 +1641,14 @@ export default function App() {
     return result;
   };
 
+  const handleSaveLicense = async (nextLicense) => {
+    const result = await api.put("/settings/license", nextLicense);
+    setLicense(result.license);
+    updateUser({ ...user, license: result.license });
+    await fetchData();
+    return result;
+  };
+
   const handlePrintReceipt = async (receipt, copyType = "both") => {
     const printWindow = window.open("", "_blank", "width=900,height=700");
     if (!printWindow) {
@@ -1504,14 +1659,14 @@ export default function App() {
     try {
       let printableReceipt = receipt;
 
-      if (user.role !== "admin") {
+      if (!hasPermission(user, "reprintReceipts")) {
         const result = await api.post(`/transactions/${receipt.id}/print`);
         printableReceipt = receiptFromTransactions(result.transactions) || receipt;
       }
 
       printReceiptDocument(
         { ...printableReceipt, businessProfile: printableReceipt.businessProfile || businessProfile },
-        user.role === "admin" ? copyType : "both",
+        hasPermission(user, "reprintReceipts") ? copyType : "both",
         printWindow
       );
       await fetchData();
@@ -1544,25 +1699,29 @@ export default function App() {
 
   if (!user) return <LoginPage />;
 
-  const isAdmin = user.role === "admin";
-  const avatarColor = isAdmin ? "rgba(199,125,255,0.15)" : "rgba(0,144,255,0.15)";
+  const canViewReports = hasPermission(user, "viewReports");
+  const canManageInventory = hasPermission(user, "manageInventory");
+  const canManageUsers = hasPermission(user, "manageUsers");
+  const canViewAllTransactions = hasPermission(user, "viewAllTransactions");
+  const canSell = hasPermission(user, "sell");
+  const canPrint = hasPermission(user, "printReceipts");
+  const canManageSettings = hasPermission(user, "manageSettings");
+  const canManageData = hasPermission(user, "manageData");
+  const canUseManagementDashboard = canViewReports || canViewAllTransactions;
+  const avatarColor = canUseManagementDashboard ? "rgba(199,125,255,0.15)" : "rgba(0,144,255,0.15)";
   const avatarText = user.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
 
-  const adminNav = [
-    { id: "dashboard", label: "Dashboard", icon: I.dash },
-    { id: "inventory", label: "Inventory", icon: I.items },
-    { id: "users", label: "Users", icon: I.users },
-    { id: "transactions", label: "Transactions", icon: I.txn },
-    { id: "data", label: "Data Tools", icon: I.chart },
-    { id: "settings", label: "Settings", icon: I.settings },
-  ];
-  const userNav = [
-    { id: "dashboard", label: "Dashboard", icon: I.dash },
-    { id: "sell", label: "Make a Sale", icon: I.sell },
-    { id: "receipts", label: "Receipts", icon: I.txn },
-    { id: "store", label: "Store Items", icon: I.items },
-  ];
-  const nav = isAdmin ? adminNav : userNav;
+  const nav = [
+    { id: "dashboard", label: "Dashboard", icon: I.dash, show: true },
+    { id: "inventory", label: "Inventory", icon: I.items, show: canManageInventory || hasPermission(user, "viewInventory") },
+    { id: "users", label: "Users", icon: I.users, show: canManageUsers },
+    { id: "transactions", label: "Transactions", icon: I.txn, show: canViewAllTransactions },
+    { id: "data", label: "Data Tools", icon: I.chart, show: canViewAllTransactions },
+    { id: "sell", label: "Make a Sale", icon: I.sell, show: canSell },
+    { id: "receipts", label: "Receipts", icon: I.txn, show: !canViewAllTransactions && canPrint },
+    { id: "store", label: "Store Items", icon: I.items, show: !canManageInventory && hasPermission(user, "viewInventory") },
+    { id: "settings", label: "Settings", icon: I.settings, show: canManageSettings },
+  ].filter(item => item.show);
 
   const topbarTitles = { dashboard: "Dashboard", inventory: "Inventory", users: "Users", transactions: "Transactions", data: "Data Tools", sell: "Make a Sale", receipts: "Receipts", store: "Store Items", settings: "Settings" };
 
@@ -1577,10 +1736,10 @@ export default function App() {
           </div>
         </div>
         <div className="sidebar-user">
-          <div className="sidebar-avatar" style={{ background: avatarColor, color: isAdmin ? "var(--accent4)" : "var(--accent2)" }}>{avatarText}</div>
+          <div className="sidebar-avatar" style={{ background: avatarColor, color: canUseManagementDashboard ? "var(--accent4)" : "var(--accent2)" }}>{avatarText}</div>
           <div className="sidebar-user-info">
             <p>{user.name.split(" ")[0]}</p>
-            <span>{user.role}</span>
+            <span>{ROLE_LABELS[user.role] || user.role}</span>
           </div>
         </div>
         <nav className="sidebar-nav">
@@ -1602,7 +1761,7 @@ export default function App() {
         <div className="topbar">
           <span className="topbar-title">{topbarTitles[page]}</span>
           <div className="topbar-right">
-            {isAdmin && (
+            {canManageInventory && (
               <div style={{ position: "relative" }}>
                 <button className="notif-btn" onClick={() => setNotifOpen(o => !o)}>{I.notif}
                   {unreadCount > 0 && <span className="notif-dot" />}
@@ -1617,16 +1776,16 @@ export default function App() {
         </div>
 
         <div className="content">
-          {page === "dashboard" && isAdmin && <AdminDashboard items={items} users={users} txns={txns} />}
-          {page === "inventory" && isAdmin && <AdminInventory items={items} onAdd={handleAddItem} onEdit={handleEditItem} onDelete={handleDeleteItem} onBulkImport={handleBulkImport} />}
-          {page === "users" && isAdmin && <AdminUsers users={users} onAdd={handleAddUser} onEdit={handleEditUser} onDelete={handleDeleteUser} onToggle={handleToggleUser} />}
-          {page === "transactions" && isAdmin && <AdminTransactions txns={txns} onPrintReceipt={handlePrintReceipt} />}
-          {page === "data" && isAdmin && <AdminDataTools txns={txns} onClearHistory={handleClearHistory} onResetFresh={handleResetFresh} onResetDemo={handleResetDemo} />}
-          {page === "settings" && isAdmin && <BusinessSettings key={JSON.stringify(businessProfile)} businessProfile={businessProfile} user={user} onSave={handleSaveBusinessProfile} />}
-          {page === "dashboard" && !isAdmin && <UserDashboard currentUser={user} items={items} txns={txns} />}
-          {page === "sell" && !isAdmin && <UserSell items={items} onSell={handleSell} onPrintReceipt={handlePrintReceipt} />}
-          {page === "receipts" && !isAdmin && <UserReceipts txns={txns} onPrintReceipt={handlePrintReceipt} />}
-          {page === "store" && !isAdmin && <UserStore items={items} />}
+          {page === "dashboard" && canUseManagementDashboard && <AdminDashboard items={items} users={users} txns={txns} />}
+          {page === "dashboard" && !canUseManagementDashboard && <UserDashboard currentUser={user} items={items} txns={txns} />}
+          {page === "inventory" && hasPermission(user, "viewInventory") && <AdminInventory items={items} onAdd={handleAddItem} onEdit={handleEditItem} onDelete={handleDeleteItem} onBulkImport={handleBulkImport} readOnly={!canManageInventory} />}
+          {page === "users" && canManageUsers && <AdminUsers users={users} onAdd={handleAddUser} onEdit={handleEditUser} onDelete={handleDeleteUser} onToggle={handleToggleUser} />}
+          {page === "transactions" && canViewAllTransactions && <AdminTransactions txns={txns} onPrintReceipt={handlePrintReceipt} canPrint={canPrint} />}
+          {page === "data" && canViewAllTransactions && <AdminDataTools txns={txns} onClearHistory={handleClearHistory} onResetFresh={handleResetFresh} onResetDemo={handleResetDemo} canManageData={canManageData} />}
+          {page === "settings" && canManageSettings && <BusinessSettings key={`${JSON.stringify(businessProfile)}-${JSON.stringify(license)}`} businessProfile={businessProfile} license={license} user={user} onSaveProfile={handleSaveBusinessProfile} onSaveLicense={handleSaveLicense} />}
+          {page === "sell" && canSell && <UserSell items={items} onSell={handleSell} onPrintReceipt={handlePrintReceipt} />}
+          {page === "receipts" && !canViewAllTransactions && canPrint && <UserReceipts txns={txns} onPrintReceipt={handlePrintReceipt} />}
+          {page === "store" && hasPermission(user, "viewInventory") && <UserStore items={items} />}
         </div>
         <footer className="app-footer">{RECEIPT_FOOTER}</footer>
       </div>

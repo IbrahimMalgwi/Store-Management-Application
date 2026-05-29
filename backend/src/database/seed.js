@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { DEFAULT_LICENSE } from "../license.js";
 
 export const SEED_ITEMS = [
   { id: 1, sku: "SKU-001", name: "Wireless Headphones", qty: 45, amount: 89.99, description: "Premium noise-cancelling headphones", sold: 120 },
@@ -29,23 +30,24 @@ export const DEFAULT_INSTANCE = {
   name: "Default Store",
   slug: "default",
   businessProfile: { ...DEFAULT_BUSINESS_PROFILE },
-  plan: "standalone",
+  plan: DEFAULT_LICENSE.plan,
+  license: { ...DEFAULT_LICENSE },
   active: true,
   createdAt: "2024-01-10",
 };
 
 const SEED_USERS = [
-  { id: 1, name: "Admin User", email: "admin@store.com", password: "admin123", role: "admin", createdAt: "2024-01-10", active: true },
-  { id: 2, name: "Jane Doe", email: "jane@store.com", password: "user123", role: "user", createdAt: "2024-02-14", active: true },
-  { id: 3, name: "Mark Lee", email: "mark@store.com", password: "user123", role: "user", createdAt: "2024-03-05", active: true },
-  { id: 4, name: "Priya Shah", email: "priya@store.com", password: "user123", role: "user", createdAt: "2024-04-20", active: false },
+  { id: 1, name: "Admin User", email: "admin@store.com", password: "admin123", role: "owner", createdAt: "2024-01-10", active: true },
+  { id: 2, name: "Jane Doe", email: "jane@store.com", password: "user123", role: "cashier", createdAt: "2024-02-14", active: true },
+  { id: 3, name: "Mark Lee", email: "mark@store.com", password: "user123", role: "manager", createdAt: "2024-03-05", active: true },
+  { id: 4, name: "Priya Shah", email: "priya@store.com", password: "user123", role: "viewer", createdAt: "2024-04-20", active: false },
 ];
 
 const createSeedTransactions = (users, items) => {
   const txns = [];
   const now = new Date();
   let id = 1;
-  const salesUsers = users.filter((user) => user.role === "user");
+  const salesUsers = users.filter((user) => ["owner", "manager", "cashier"].includes(user.role));
 
   for (let d = 29; d >= 0; d -= 1) {
     const date = new Date(now);

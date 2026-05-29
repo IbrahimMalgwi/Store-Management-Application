@@ -1,11 +1,11 @@
 import express from "express";
 import { getDB, saveCollection } from "../db.js";
-import { authenticateToken, requireAdmin } from "../middleware/auth.js";
+import { authenticateToken, requirePermission } from "../middleware/auth.js";
 import { createSeedData } from "../src/database/seed.js";
 
 const router = express.Router();
 
-router.use(authenticateToken, requireAdmin);
+router.use(authenticateToken, requirePermission("manageData"));
 
 router.delete("/history", (req, res) => {
   const db = getDB();
@@ -37,8 +37,8 @@ router.post("/reset", async (req, res) => {
     ];
     const users = [
       ...db.users.filter(user => user.instanceId !== req.user.instanceId),
-      { ...currentAdmin, role: "admin", active: true },
-      ...seed.users.filter(user => user.role !== "admin").map(user => ({ ...user, instanceId: req.user.instanceId })),
+      { ...currentAdmin, role: "owner", active: true },
+      ...seed.users.filter(user => user.role !== "owner").map(user => ({ ...user, instanceId: req.user.instanceId })),
     ];
     const txns = [
       ...db.txns.filter(txn => txn.instanceId !== req.user.instanceId),
@@ -60,7 +60,7 @@ router.post("/reset", async (req, res) => {
   const items = db.items.filter(item => item.instanceId !== req.user.instanceId);
   const users = [
     ...db.users.filter(user => user.instanceId !== req.user.instanceId),
-    { ...currentAdmin, role: "admin", active: true },
+    { ...currentAdmin, role: "owner", active: true },
   ];
   const txns = db.txns.filter(txn => txn.instanceId !== req.user.instanceId);
   const notifications = db.notifications.filter(notification => notification.instanceId !== req.user.instanceId);

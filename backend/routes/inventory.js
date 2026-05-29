@@ -1,6 +1,6 @@
 import express from "express";
 import { getDB, saveCollection } from "../db.js";
-import { authenticateToken, requireAdmin } from "../middleware/auth.js";
+import { authenticateToken, requirePermission } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -11,7 +11,7 @@ router.get("/", authenticateToken, (req, res) => {
 });
 
 // POST add new item (Admin only)
-router.post("/", authenticateToken, requireAdmin, (req, res) => {
+router.post("/", authenticateToken, requirePermission("manageInventory"), (req, res) => {
   const { sku, name, qty, amount, description } = req.body;
 
   if (!sku || !name || qty === undefined || amount === undefined) {
@@ -44,7 +44,7 @@ router.post("/", authenticateToken, requireAdmin, (req, res) => {
 });
 
 // POST bulk add/update stock (Admin only)
-router.post("/bulk", authenticateToken, requireAdmin, (req, res) => {
+router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (req, res) => {
   const { items } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -102,7 +102,7 @@ router.post("/bulk", authenticateToken, requireAdmin, (req, res) => {
 });
 
 // PUT update item (Admin only)
-router.put("/:id", authenticateToken, requireAdmin, (req, res) => {
+router.put("/:id", authenticateToken, requirePermission("manageInventory"), (req, res) => {
   const itemId = Number(req.params.id);
   const { sku, name, qty, amount, description } = req.body;
 
@@ -139,7 +139,7 @@ router.put("/:id", authenticateToken, requireAdmin, (req, res) => {
 });
 
 // DELETE item (Admin only)
-router.delete("/:id", authenticateToken, requireAdmin, (req, res) => {
+router.delete("/:id", authenticateToken, requirePermission("manageInventory"), (req, res) => {
   const itemId = Number(req.params.id);
   const db = getDB();
   const index = db.items.findIndex(i => i.id === itemId && i.instanceId === req.user.instanceId);

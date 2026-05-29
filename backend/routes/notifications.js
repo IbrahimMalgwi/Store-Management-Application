@@ -1,6 +1,6 @@
 import express from "express";
 import { getDB, saveCollection } from "../db.js";
-import { authenticateToken } from "../middleware/auth.js";
+import { authenticateToken, requirePermission } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -14,7 +14,7 @@ router.get("/", (req, res) => {
 });
 
 // POST add notification
-router.post("/", (req, res) => {
+router.post("/", requirePermission("manageInventory"), (req, res) => {
   const { message, time } = req.body;
 
   if (!message) {
@@ -37,7 +37,7 @@ router.post("/", (req, res) => {
 });
 
 // POST mark all read
-router.post("/mark-read", (req, res) => {
+router.post("/mark-read", requirePermission("manageInventory"), (req, res) => {
   const db = getDB();
   db.notifications = db.notifications.map(n => n.instanceId === req.user.instanceId ? ({ ...n, unread: false }) : n);
   saveCollection("notifications", db.notifications);
