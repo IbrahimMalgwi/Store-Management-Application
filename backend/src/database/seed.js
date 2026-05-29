@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { DEFAULT_LICENSE } from "../license.js";
+import { DEFAULT_RECEIPT_SETTINGS } from "../receiptNumbering.js";
 
 export const SEED_ITEMS = [
   { id: 1, sku: "SKU-001", name: "Wireless Headphones", qty: 45, amount: 89.99, description: "Premium noise-cancelling headphones", sold: 120 },
@@ -30,6 +31,7 @@ export const DEFAULT_INSTANCE = {
   name: "Default Store",
   slug: "default",
   businessProfile: { ...DEFAULT_BUSINESS_PROFILE },
+  receiptSettings: { ...DEFAULT_RECEIPT_SETTINGS },
   plan: DEFAULT_LICENSE.plan,
   license: { ...DEFAULT_LICENSE },
   active: true,

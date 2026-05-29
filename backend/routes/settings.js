@@ -3,6 +3,7 @@ import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, requirePermission } from "../middleware/auth.js";
 import { cleanLicenseInput, getLicenseAccess, LICENSE_MODES, LICENSE_PLANS, LICENSE_STATUSES } from "../src/license.js";
 import { recordAuditLog } from "../src/audit.js";
+import { formatReceiptNumber, normalizeReceiptSettings } from "../src/receiptNumbering.js";
 
 const router = express.Router();
 
@@ -42,6 +43,20 @@ router.get("/license", (req, res) => {
       plans: LICENSE_PLANS,
       statuses: LICENSE_STATUSES,
     },
+  });
+});
+
+router.get("/receipt-numbering", (req, res) => {
+  const instance = getInstance(req.user.instanceId);
+
+  if (!instance) {
+    return res.status(404).json({ message: "Instance not found" });
+  }
+
+  const receiptSettings = normalizeReceiptSettings(instance.receiptSettings);
+  res.json({
+    ...receiptSettings,
+    preview: formatReceiptNumber(receiptSettings),
   });
 });
 
@@ -122,6 +137,40 @@ router.put("/license", requirePermission("manageSettings"), (req, res) => {
     license: {
       ...license,
       access: getLicenseAccess(license),
+    },
+  });
+});
+
+router.put("/receipt-numbering", requirePermission("manageSettings"), (req, res) => {
+  const receiptSettings = normalizeReceiptSettings(req.body);
+  const db = getDB();
+  const index = db.instances.findIndex(instance => instance.id === req.user.instanceId);
+
+  if (index === -1) {
+    return res.status(404).json({ message: "Instance not found" });
+  }
+
+  const previousSettings = normalizeReceiptSettings(db.instances[index].receiptSettings);
+  db.instances[index] = {
+    ...db.instances[index],
+    receiptSettings,
+  };
+
+  saveCollection("instances", db.instances);
+  recordAuditLog({
+    req,
+    action: "settings.receipt_numbering_update",
+    entityType: "settings",
+    entityId: req.user.instanceId,
+    summary: `Updated receipt numbering to ${formatReceiptNumber(receiptSettings)}`,
+    metadata: { before: previousSettings, after: receiptSettings },
+  });
+
+  res.json({
+    message: "Receipt numbering settings updated",
+    receiptSettings: {
+      ...receiptSettings,
+      preview: formatReceiptNumber(receiptSettings),
     },
   });
 });

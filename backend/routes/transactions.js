@@ -2,6 +2,7 @@ import express from "express";
 import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, hasPermission, requirePermission } from "../middleware/auth.js";
 import { recordAuditLog } from "../src/audit.js";
+import { reserveReceiptNumber } from "../src/receiptNumbering.js";
 
 const router = express.Router();
 
@@ -55,7 +56,8 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
   const now = new Date();
   const date = now.toISOString().split("T")[0];
   const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-  const saleId = `SALE-${Date.now()}`;
+  const { receiptNo, nextSettings } = reserveReceiptNumber(instance?.receiptSettings);
+  const saleId = receiptNo;
 
   // First check all items for stock availability
   for (const cartItem of cartItems) {
@@ -109,8 +111,10 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
 
   // Save changes to database
   db.txns.push(...newTxns);
+  db.instances = db.instances.map(item => item.id === req.user.instanceId ? ({ ...item, receiptSettings: nextSettings }) : item);
   saveCollection("items", db.items);
   saveCollection("txns", db.txns);
+  saveCollection("instances", db.instances);
   recordAuditLog({
     req,
     action: "sale.create",

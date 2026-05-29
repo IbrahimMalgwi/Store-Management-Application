@@ -24,6 +24,14 @@ const DEFAULT_LICENSE = {
   licenseKey: "LOCAL-STANDALONE",
 };
 
+const DEFAULT_RECEIPT_SETTINGS = {
+  prefix: "SALE",
+  separator: "-",
+  nextNumber: 1,
+  minDigits: 4,
+  preview: "SALE-0001",
+};
+
 const RECEIPT_FOOTER = "Store Management Application powered by Ganzy-Malgwi Technologies, 08152546005, ganzymalgwitechnologies@gmail.com.";
 
 const LICENSE_LABELS = {
@@ -63,6 +71,14 @@ const ROLE_PERMISSIONS = {
 };
 
 const hasPermission = (user, permission) => ROLE_PERMISSIONS[user?.role]?.includes(permission) || false;
+
+const formatReceiptPreview = (settings = DEFAULT_RECEIPT_SETTINGS) => {
+  const prefix = String(settings.prefix || DEFAULT_RECEIPT_SETTINGS.prefix).toUpperCase();
+  const separator = settings.separator ?? DEFAULT_RECEIPT_SETTINGS.separator;
+  const nextNumber = Math.max(1, Number.parseInt(settings.nextNumber, 10) || DEFAULT_RECEIPT_SETTINGS.nextNumber);
+  const minDigits = Math.min(12, Math.max(1, Number.parseInt(settings.minDigits, 10) || DEFAULT_RECEIPT_SETTINGS.minDigits));
+  return `${prefix}${separator}${String(nextNumber).padStart(minDigits, "0")}`;
+};
 
 const getReceiptId = (txn) => txn.saleId || String(txn.id);
 
@@ -1095,11 +1111,13 @@ function AdminAuditLogs({ logs }) {
 }
 
 // ─── SETTINGS ────────────────────────────────────────────────────────────────
-function BusinessSettings({ businessProfile, license, user, onSaveProfile, onSaveLicense }) {
+function BusinessSettings({ businessProfile, license, receiptSettings, user, onSaveProfile, onSaveLicense, onSaveReceiptSettings }) {
   const [form, setForm] = useState(businessProfile || DEFAULT_BUSINESS_PROFILE);
   const [licenseForm, setLicenseForm] = useState(license || DEFAULT_LICENSE);
+  const [receiptForm, setReceiptForm] = useState(receiptSettings || DEFAULT_RECEIPT_SETTINGS);
   const [saving, setSaving] = useState(false);
   const [savingLicense, setSavingLicense] = useState(false);
+  const [savingReceipt, setSavingReceipt] = useState(false);
 
   const update = (field, value) => {
     setForm(current => ({ ...current, [field]: value }));
@@ -1107,6 +1125,10 @@ function BusinessSettings({ businessProfile, license, user, onSaveProfile, onSav
 
   const updateLicense = (field, value) => {
     setLicenseForm(current => ({ ...current, [field]: value }));
+  };
+
+  const updateReceipt = (field, value) => {
+    setReceiptForm(current => ({ ...current, [field]: value }));
   };
 
   const save = async () => {
@@ -1142,6 +1164,29 @@ function BusinessSettings({ businessProfile, license, user, onSaveProfile, onSav
       setSavingLicense(false);
     }
   };
+
+  const saveReceiptSettings = async () => {
+    if (!receiptForm.prefix) {
+      alert("Receipt prefix is required.");
+      return;
+    }
+
+    setSavingReceipt(true);
+    try {
+      await onSaveReceiptSettings({
+        ...receiptForm,
+        nextNumber: Number(receiptForm.nextNumber),
+        minDigits: Number(receiptForm.minDigits),
+      });
+      alert("Receipt numbering settings saved.");
+    } catch (err) {
+      alert(err.message || "Unable to save receipt numbering settings");
+    } finally {
+      setSavingReceipt(false);
+    }
+  };
+
+  const receiptPreview = formatReceiptPreview(receiptForm);
 
   return (
     <>
@@ -1253,10 +1298,44 @@ function BusinessSettings({ businessProfile, license, user, onSaveProfile, onSav
             <p>{form.address || "Business address"}</p>
             <p>{form.phone || "Phone number"}{form.phone && form.email ? " | " : ""}{form.email || "Email address"}</p>
             <div className="preview-divider" />
-            <p><strong>Receipt No:</strong> SALE-0001</p>
+            <p><strong>Receipt No:</strong> {receiptPreview}</p>
             <p><strong>Sold By:</strong> {user.name}</p>
             <div className="preview-divider" />
             <p className="preview-footer">{RECEIPT_FOOTER}</p>
+          </div>
+        </div>
+
+        <div className="table-card">
+          <div className="table-header">
+            <h3>Receipt Numbering</h3>
+            <span className="badge-pill blue">{receiptPreview}</span>
+          </div>
+          <div style={{ padding: 20 }}>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Prefix</label>
+                <input value={receiptForm.prefix} onChange={e => updateReceipt("prefix", e.target.value.toUpperCase())} placeholder="SALE" />
+              </div>
+              <div className="form-group">
+                <label>Separator</label>
+                <select value={receiptForm.separator} onChange={e => updateReceipt("separator", e.target.value)}>
+                  <option value="-">Dash (-)</option>
+                  <option value="/">Slash (/)</option>
+                  <option value="">None</option>
+                </select>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Next Number</label>
+                <input type="number" min="1" value={receiptForm.nextNumber} onChange={e => updateReceipt("nextNumber", e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Minimum Digits</label>
+                <input type="number" min="1" max="12" value={receiptForm.minDigits} onChange={e => updateReceipt("minDigits", e.target.value)} />
+              </div>
+            </div>
+            <button className="btn btn-primary" onClick={saveReceiptSettings} disabled={savingReceipt}>{savingReceipt ? "Saving..." : "Save Receipt Numbering"}</button>
           </div>
         </div>
       </div>
@@ -1685,6 +1764,7 @@ export default function App() {
   const [txns, setTxns] = useState([]);
   const [businessProfile, setBusinessProfile] = useState(DEFAULT_BUSINESS_PROFILE);
   const [license, setLicense] = useState(user?.license || DEFAULT_LICENSE);
+  const [receiptSettings, setReceiptSettings] = useState(DEFAULT_RECEIPT_SETTINGS);
   const [auditLogs, setAuditLogs] = useState([]);
   const [page, setPage] = useState("dashboard");
   const [notifOpen, setNotifOpen] = useState(false);
@@ -1709,6 +1789,9 @@ export default function App() {
 
       const licenseData = await api.get("/settings/license");
       setLicense(licenseData);
+
+      const receiptSettingsData = await api.get("/settings/receipt-numbering");
+      setReceiptSettings(receiptSettingsData);
 
       if (hasPermission(user, "manageUsers")) {
         const usersData = await api.get("/users");
@@ -1817,6 +1900,13 @@ export default function App() {
     const result = await api.put("/settings/license", nextLicense);
     setLicense(result.license);
     updateUser({ ...user, license: result.license });
+    await fetchData();
+    return result;
+  };
+
+  const handleSaveReceiptSettings = async (nextReceiptSettings) => {
+    const result = await api.put("/settings/receipt-numbering", nextReceiptSettings);
+    setReceiptSettings(result.receiptSettings);
     await fetchData();
     return result;
   };
@@ -1964,7 +2054,7 @@ export default function App() {
           {page === "transactions" && canViewAllTransactions && <AdminTransactions txns={txns} onPrintReceipt={handlePrintReceipt} canPrint={canPrint} />}
           {page === "data" && canViewAllTransactions && <AdminDataTools txns={txns} onClearHistory={handleClearHistory} onResetFresh={handleResetFresh} onResetDemo={handleResetDemo} canManageData={canManageData} />}
           {page === "audit" && canManageData && <AdminAuditLogs logs={auditLogs} />}
-          {page === "settings" && canManageSettings && <BusinessSettings key={`${JSON.stringify(businessProfile)}-${JSON.stringify(license)}`} businessProfile={businessProfile} license={license} user={user} onSaveProfile={handleSaveBusinessProfile} onSaveLicense={handleSaveLicense} />}
+          {page === "settings" && canManageSettings && <BusinessSettings key={`${JSON.stringify(businessProfile)}-${JSON.stringify(license)}-${JSON.stringify(receiptSettings)}`} businessProfile={businessProfile} license={license} receiptSettings={receiptSettings} user={user} onSaveProfile={handleSaveBusinessProfile} onSaveLicense={handleSaveLicense} onSaveReceiptSettings={handleSaveReceiptSettings} />}
           {page === "account" && <AccountSecurity user={user} onChangePassword={handleChangePassword} />}
           {page === "sell" && canSell && <UserSell items={items} onSell={handleSell} onPrintReceipt={handlePrintReceipt} />}
           {page === "receipts" && !canViewAllTransactions && canPrint && <UserReceipts txns={txns} onPrintReceipt={handlePrintReceipt} />}
