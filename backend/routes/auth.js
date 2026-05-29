@@ -1,12 +1,13 @@
 import express from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-import { getDB } from "../db.js";
-import { normalizeRole } from "../middleware/auth.js";
+import { getDB, saveCollection } from "../db.js";
+import { authenticateToken, normalizeRole } from "../middleware/auth.js";
 import { getLicenseAccess } from "../src/license.js";
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "stockos_secret_key_123";
+const MIN_PASSWORD_LENGTH = 8;
 
 router.post("/login", async (req, res) => {
   const { email, password, role, instanceId, instanceSlug } = req.body;
@@ -79,6 +80,51 @@ router.post("/login", async (req, res) => {
       license: instance.license
     }
   });
+});
+
+router.put("/password", authenticateToken, async (req, res) => {
+  const { currentPassword, newPassword, confirmPassword } = req.body;
+
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    return res.status(400).json({ message: "Current password, new password, and confirmation are required" });
+  }
+
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ message: `New password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+  }
+
+  if (newPassword !== confirmPassword) {
+    return res.status(400).json({ message: "New password and confirmation do not match" });
+  }
+
+  const db = getDB();
+  const index = db.users.findIndex(user => user.id === req.user.id && user.instanceId === req.user.instanceId);
+  const user = index >= 0 ? db.users[index] : null;
+
+  if (!user) {
+    return res.status(404).json({ message: "Account not found" });
+  }
+
+  const isMatch = await bcrypt.compare(currentPassword, user.password);
+  if (!isMatch) {
+    return res.status(400).json({ message: "Current password is incorrect" });
+  }
+
+  const isSamePassword = await bcrypt.compare(newPassword, user.password);
+  if (isSamePassword) {
+    return res.status(400).json({ message: "New password must be different from the current password" });
+  }
+
+  const salt = await bcrypt.genSalt(10);
+  db.users[index] = {
+    ...user,
+    password: await bcrypt.hash(newPassword, salt),
+    passwordUpdatedAt: new Date().toISOString(),
+  };
+
+  saveCollection("users", db.users);
+
+  res.json({ message: "Password changed successfully" });
 });
 
 export default router;

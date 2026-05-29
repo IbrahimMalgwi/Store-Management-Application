@@ -463,6 +463,16 @@ textarea { resize: vertical; min-height: 80px; }
   margin-bottom: 5px;
 }
 .license-summary strong { color: var(--text); font-size: 13px; text-transform: capitalize; }
+.account-profile {
+  padding: 20px; display: flex; align-items: center; gap: 12px;
+}
+.account-profile strong {
+  display: block; color: var(--text); font-size: 14px; margin-bottom: 4px;
+}
+.account-profile span {
+  display: block; color: var(--text3); font-family: var(--mono); font-size: 11px;
+  margin-top: 2px;
+}
 .receipt-preview { padding: 22px; color: var(--text2); font-size: 12px; line-height: 1.6; }
 .receipt-preview h3 { color: var(--text); font-size: 18px; font-weight: 800; margin-bottom: 4px; }
 .receipt-preview strong { color: var(--text); }

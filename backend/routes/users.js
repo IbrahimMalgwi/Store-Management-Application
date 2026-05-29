@@ -10,6 +10,7 @@ const router = express.Router();
 router.use(authenticateToken, requirePermission("manageUsers"));
 
 const VALID_ROLES = ["owner", "manager", "cashier", "viewer"];
+const MIN_PASSWORD_LENGTH = 8;
 
 // GET all users
 router.get("/", (req, res) => {
@@ -132,6 +133,45 @@ router.put("/:id", async (req, res) => {
   saveCollection("users", db.users);
 
   res.json({ ...updatedUser, password: "●●●●●●" });
+});
+
+router.post("/:id/reset-password", async (req, res) => {
+  const userId = Number(req.params.id);
+  const { password, confirmPassword } = req.body;
+
+  if (req.user.id === userId) {
+    return res.status(400).json({ message: "Use change password for your own account" });
+  }
+
+  if (!password || !confirmPassword) {
+    return res.status(400).json({ message: "Password and confirmation are required" });
+  }
+
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+  }
+
+  if (password !== confirmPassword) {
+    return res.status(400).json({ message: "Password and confirmation do not match" });
+  }
+
+  const db = getDB();
+  const index = db.users.findIndex(u => u.id === userId && u.instanceId === req.user.instanceId);
+
+  if (index === -1) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  const salt = await bcrypt.genSalt(10);
+  db.users[index] = {
+    ...db.users[index],
+    password: await bcrypt.hash(password, salt),
+    passwordUpdatedAt: new Date().toISOString(),
+  };
+
+  saveCollection("users", db.users);
+
+  res.json({ message: "Password reset successfully" });
 });
 
 // DELETE user

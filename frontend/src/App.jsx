@@ -730,13 +730,19 @@ function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport, readOnly
 }
 
 // ─── ADMIN: Users ─────────────────────────────────────────────────────────────
-function AdminUsers({ users, onAdd, onEdit, onDelete, onToggle }) {
+function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onResetPassword }) {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "cashier", active: true });
+  const [passwordForm, setPasswordForm] = useState({ password: "", confirmPassword: "" });
+  const [resetUser, setResetUser] = useState(null);
   const [editId, setEditId] = useState(null);
 
   const openAdd = () => { setForm({ name: "", email: "", password: "", role: "cashier", active: true }); setModal("add"); };
   const openEdit = (u) => { setForm({ name: u.name, email: u.email, password: u.password, role: u.role, active: u.active }); setEditId(u.id); setModal("edit"); };
+  const openReset = (u) => {
+    setResetUser(u);
+    setPasswordForm({ password: "", confirmPassword: "" });
+  };
   
   const save = async () => {
     if (!form.name || !form.email || (!form.password && modal === "add") || !form.role) return;
@@ -770,6 +776,21 @@ function AdminUsers({ users, onAdd, onEdit, onDelete, onToggle }) {
     }
   };
 
+  const resetPassword = async () => {
+    if (!passwordForm.password || !passwordForm.confirmPassword) {
+      alert("Password and confirmation are required.");
+      return;
+    }
+
+    try {
+      await onResetPassword(resetUser.id, passwordForm);
+      setResetUser(null);
+      alert("Password reset successfully.");
+    } catch (err) {
+      alert(err.message || "Error resetting password");
+    }
+  };
+
   return (
     <>
       <div className="section-header">
@@ -795,6 +816,7 @@ function AdminUsers({ users, onAdd, onEdit, onDelete, onToggle }) {
                 <td>
                   <div style={{ display: "flex", gap: 6 }}>
                     <button className="btn btn-sm btn-secondary" onClick={() => openEdit(u)}>{I.edit}</button>
+                    {u.id !== currentUser.id && <button className="btn btn-sm btn-secondary" onClick={() => openReset(u)}>Reset Password</button>}
                     <button className="btn btn-sm btn-danger" onClick={() => del(u.id)}>{I.del}</button>
                   </div>
                 </td>
@@ -828,6 +850,20 @@ function AdminUsers({ users, onAdd, onEdit, onDelete, onToggle }) {
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </select>
+          </div>
+        </Modal>
+      )}
+
+      {resetUser && (
+        <Modal title={`Reset Password: ${resetUser.name}`} onClose={() => setResetUser(null)}
+          footer={<><button className="btn btn-secondary" onClick={() => setResetUser(null)}>Cancel</button><button className="btn btn-primary" onClick={resetPassword}>Reset Password</button></>}>
+          <div className="form-group">
+            <label>New Password</label>
+            <input type="password" value={passwordForm.password} onChange={e => setPasswordForm(f => ({ ...f, password: e.target.value }))} placeholder="At least 8 characters" />
+          </div>
+          <div className="form-group">
+            <label>Confirm Password</label>
+            <input type="password" value={passwordForm.confirmPassword} onChange={e => setPasswordForm(f => ({ ...f, confirmPassword: e.target.value }))} placeholder="Confirm password" />
           </div>
         </Modal>
       )}
@@ -1168,6 +1204,79 @@ function BusinessSettings({ businessProfile, license, user, onSaveProfile, onSav
             <p><strong>Sold By:</strong> {user.name}</p>
             <div className="preview-divider" />
             <p className="preview-footer">{RECEIPT_FOOTER}</p>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── ACCOUNT SECURITY ────────────────────────────────────────────────────────
+function AccountSecurity({ user, onChangePassword }) {
+  const [form, setForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+  const [saving, setSaving] = useState(false);
+
+  const update = (field, value) => {
+    setForm(current => ({ ...current, [field]: value }));
+  };
+
+  const save = async () => {
+    if (!form.currentPassword || !form.newPassword || !form.confirmPassword) {
+      alert("Current password, new password, and confirmation are required.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await onChangePassword(form);
+      setForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      alert("Password changed successfully.");
+    } catch (err) {
+      alert(err.message || "Unable to change password");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="section-header">
+        <h2>Account</h2>
+      </div>
+
+      <div className="settings-grid">
+        <div className="table-card">
+          <div className="table-header"><h3>Change Password</h3></div>
+          <div style={{ padding: 20 }}>
+            <div className="form-group">
+              <label>Current Password</label>
+              <input type="password" value={form.currentPassword} onChange={e => update("currentPassword", e.target.value)} placeholder="Current password" />
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>New Password</label>
+                <input type="password" value={form.newPassword} onChange={e => update("newPassword", e.target.value)} placeholder="At least 8 characters" />
+              </div>
+              <div className="form-group">
+                <label>Confirm Password</label>
+                <input type="password" value={form.confirmPassword} onChange={e => update("confirmPassword", e.target.value)} placeholder="Confirm password" />
+              </div>
+            </div>
+            <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "Saving..." : "Change Password"}</button>
+          </div>
+        </div>
+
+        <div className="table-card">
+          <div className="table-header"><h3>Profile</h3></div>
+          <div className="account-profile">
+            <div className="sidebar-avatar" style={{ background: "rgba(47,111,237,0.12)", color: "var(--accent2)" }}>
+              {user.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2)}
+            </div>
+            <div>
+              <strong>{user.name}</strong>
+              <span>{user.email}</span>
+              <span>{ROLE_LABELS[user.role] || user.role}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -1604,6 +1713,10 @@ export default function App() {
     fetchData();
   };
 
+  const handleResetPassword = async (id, form) => {
+    return api.post(`/users/${id}/reset-password`, form);
+  };
+
   const handleClearHistory = async () => {
     if (!confirm("Delete all sales history, receipts, notifications, and reset sold counts?")) return;
     await api.delete("/admin/history");
@@ -1648,6 +1761,8 @@ export default function App() {
     await fetchData();
     return result;
   };
+
+  const handleChangePassword = async (form) => api.put("/auth/password", form);
 
   const handlePrintReceipt = async (receipt, copyType = "both") => {
     const printWindow = window.open("", "_blank", "width=900,height=700");
@@ -1720,10 +1835,11 @@ export default function App() {
     { id: "sell", label: "Make a Sale", icon: I.sell, show: canSell },
     { id: "receipts", label: "Receipts", icon: I.txn, show: !canViewAllTransactions && canPrint },
     { id: "store", label: "Store Items", icon: I.items, show: !canManageInventory && hasPermission(user, "viewInventory") },
+    { id: "account", label: "Account", icon: I.users, show: true },
     { id: "settings", label: "Settings", icon: I.settings, show: canManageSettings },
   ].filter(item => item.show);
 
-  const topbarTitles = { dashboard: "Dashboard", inventory: "Inventory", users: "Users", transactions: "Transactions", data: "Data Tools", sell: "Make a Sale", receipts: "Receipts", store: "Store Items", settings: "Settings" };
+  const topbarTitles = { dashboard: "Dashboard", inventory: "Inventory", users: "Users", transactions: "Transactions", data: "Data Tools", sell: "Make a Sale", receipts: "Receipts", store: "Store Items", account: "Account", settings: "Settings" };
 
   return (
     <div className="app">
@@ -1779,10 +1895,11 @@ export default function App() {
           {page === "dashboard" && canUseManagementDashboard && <AdminDashboard items={items} users={users} txns={txns} />}
           {page === "dashboard" && !canUseManagementDashboard && <UserDashboard currentUser={user} items={items} txns={txns} />}
           {page === "inventory" && hasPermission(user, "viewInventory") && <AdminInventory items={items} onAdd={handleAddItem} onEdit={handleEditItem} onDelete={handleDeleteItem} onBulkImport={handleBulkImport} readOnly={!canManageInventory} />}
-          {page === "users" && canManageUsers && <AdminUsers users={users} onAdd={handleAddUser} onEdit={handleEditUser} onDelete={handleDeleteUser} onToggle={handleToggleUser} />}
+          {page === "users" && canManageUsers && <AdminUsers users={users} currentUser={user} onAdd={handleAddUser} onEdit={handleEditUser} onDelete={handleDeleteUser} onToggle={handleToggleUser} onResetPassword={handleResetPassword} />}
           {page === "transactions" && canViewAllTransactions && <AdminTransactions txns={txns} onPrintReceipt={handlePrintReceipt} canPrint={canPrint} />}
           {page === "data" && canViewAllTransactions && <AdminDataTools txns={txns} onClearHistory={handleClearHistory} onResetFresh={handleResetFresh} onResetDemo={handleResetDemo} canManageData={canManageData} />}
           {page === "settings" && canManageSettings && <BusinessSettings key={`${JSON.stringify(businessProfile)}-${JSON.stringify(license)}`} businessProfile={businessProfile} license={license} user={user} onSaveProfile={handleSaveBusinessProfile} onSaveLicense={handleSaveLicense} />}
+          {page === "account" && <AccountSecurity user={user} onChangePassword={handleChangePassword} />}
           {page === "sell" && canSell && <UserSell items={items} onSell={handleSell} onPrintReceipt={handlePrintReceipt} />}
           {page === "receipts" && !canViewAllTransactions && canPrint && <UserReceipts txns={txns} onPrintReceipt={handlePrintReceipt} />}
           {page === "store" && hasPermission(user, "viewInventory") && <UserStore items={items} />}
