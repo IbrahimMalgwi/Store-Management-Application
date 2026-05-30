@@ -346,6 +346,45 @@ const inDateRange = (txn, startDate, endDate) => txn.date >= startDate && txn.da
 const getRangeLabel = (period, startDate, endDate) =>
   period === "custom" ? `${startDate} to ${endDate}` : `${toTitle(period)} period`;
 
+const getComparisonRanges = () => {
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const year = today.getUTCFullYear();
+  const month = today.getUTCMonth();
+
+  return {
+    today: { start: today.toISOString().split("T")[0], end: today.toISOString().split("T")[0] },
+    yesterday: { start: yesterday.toISOString().split("T")[0], end: yesterday.toISOString().split("T")[0] },
+    currentMonth: {
+      start: new Date(Date.UTC(year, month, 1)).toISOString().split("T")[0],
+      end: today.toISOString().split("T")[0],
+    },
+    previousMonth: {
+      start: new Date(Date.UTC(year, month - 1, 1)).toISOString().split("T")[0],
+      end: new Date(Date.UTC(year, month, 0)).toISOString().split("T")[0],
+    },
+  };
+};
+
+const summarizeTransactions = (txns, range) => txns
+  .filter(txn => inDateRange(txn, range.start, range.end))
+  .reduce((summary, txn) => ({
+    revenue: summary.revenue + getTxnRevenue(txn),
+    profit: summary.profit + getTxnProfit(txn),
+    qty: summary.qty + getTxnQty(txn),
+  }), { revenue: 0, profit: 0, qty: 0 });
+
+const getPercentageChange = (current, previous) => {
+  if (previous === 0) return current === 0 ? 0 : null;
+  return ((current - previous) / Math.abs(previous)) * 100;
+};
+
+const formatPercentageChange = (change) => {
+  if (change === null) return "New";
+  return `${change >= 0 ? "+" : ""}${Math.round(change)}%`;
+};
+
 function PeriodRangeControl({ period, setPeriod, startDate, setStartDate, endDate, setEndDate }) {
   const syncPeriod = (nextPeriod) => {
     setPeriod(nextPeriod);
@@ -371,6 +410,40 @@ function PeriodRangeControl({ period, setPeriod, startDate, setStartDate, endDat
           <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
         </div>
       )}
+    </div>
+  );
+}
+
+function ComparisonCard({ title, subtitle, current, previous }) {
+  const metrics = [
+    { label: "Revenue", current: current.revenue, previous: previous.revenue, format: fmt },
+    { label: "Profit", current: current.profit, previous: previous.profit, format: fmt },
+    { label: "Units", current: current.qty, previous: previous.qty, format: fmtNum },
+  ];
+
+  return (
+    <div className="comparison-card">
+      <div className="comparison-card-heading">
+        <div>
+          <h4>{title}</h4>
+          <p>{subtitle}</p>
+        </div>
+        <div className="comparison-icon">{I.chart}</div>
+      </div>
+      <div className="comparison-list">
+        {metrics.map(metric => {
+          const change = getPercentageChange(metric.current, metric.previous);
+          const tone = change === null ? "blue" : change >= 0 ? "green" : "red";
+          return (
+            <div className="comparison-row" key={metric.label}>
+              <span>{metric.label}</span>
+              <strong>{metric.format(metric.current)}</strong>
+              <small>Previous {metric.format(metric.previous)}</small>
+              <span className={`badge-pill ${tone}`}>{formatPercentageChange(change)}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -449,6 +522,11 @@ function AdminDashboard({ items, users, txns }) {
   const totalSold = filtered.reduce((s, t) => s + getTxnQty(t), 0);
   const lowStock = items.filter(i => i.qty <= getItemThreshold(i)).length;
   const activeUsers = users.length ? users.filter(u => u.active).length : "—";
+  const comparisonRanges = getComparisonRanges();
+  const todayMetrics = summarizeTransactions(txns, comparisonRanges.today);
+  const yesterdayMetrics = summarizeTransactions(txns, comparisonRanges.yesterday);
+  const currentMonthMetrics = summarizeTransactions(txns, comparisonRanges.currentMonth);
+  const previousMonthMetrics = summarizeTransactions(txns, comparisonRanges.previousMonth);
 
   const itemRevenue = {};
   filtered.forEach(t => {
@@ -574,6 +652,21 @@ function AdminDashboard({ items, users, txns }) {
           <div className="stat-sub">{items.reduce((s, i) => s + i.qty, 0)} units in stock</div>
           <div className="stat-icon">{I.items}</div>
         </div>
+      </div>
+
+      <div className="comparison-grid">
+        <ComparisonCard
+          title="Today vs Yesterday"
+          subtitle="Net performance for the current day"
+          current={todayMetrics}
+          previous={yesterdayMetrics}
+        />
+        <ComparisonCard
+          title="This Month vs Last Month"
+          subtitle="Month-to-date compared with the previous month"
+          current={currentMonthMetrics}
+          previous={previousMonthMetrics}
+        />
       </div>
 
       <div className="chart-grid">
