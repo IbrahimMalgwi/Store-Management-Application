@@ -347,6 +347,50 @@ const inDateRange = (txn, startDate, endDate) => txn.date >= startDate && txn.da
 const getRangeLabel = (period, startDate, endDate) =>
   period === "custom" ? `${startDate} to ${endDate}` : `${toTitle(period)} period`;
 
+const isDateString = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || "");
+
+const getDefaultDashboardRange = (period = "weekly") => ({
+  period,
+  startDate: getStartDateForPeriod(period),
+  endDate: todayString(),
+});
+
+const readDashboardRange = (storageKey, fallbackPeriod = "weekly") => {
+  const fallback = getDefaultDashboardRange(fallbackPeriod);
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey));
+    if (!saved || !PERIOD_OPTIONS.includes(saved.period)) return fallback;
+    if (saved.period !== "custom") return getDefaultDashboardRange(saved.period);
+    if (!isDateString(saved.startDate) || !isDateString(saved.endDate) || saved.startDate > saved.endDate) return fallback;
+    return saved;
+  } catch {
+    return fallback;
+  }
+};
+
+const getDashboardRangeStorageKey = (view, user) =>
+  `stockos.dashboard.range.${user?.instanceId || "default"}.${user?.id || "anonymous"}.${view}`;
+
+function usePersistedDashboardRange(storageKey, fallbackPeriod = "weekly") {
+  const [range, setRange] = useState(() => readDashboardRange(storageKey, fallbackPeriod));
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(range));
+    } catch {
+      // Dashboard filtering should still work when browser storage is unavailable.
+    }
+  }, [range, storageKey]);
+
+  return {
+    ...range,
+    setPeriod: period => setRange(current => ({ ...current, period })),
+    setStartDate: startDate => setRange(current => ({ ...current, startDate })),
+    setEndDate: endDate => setRange(current => ({ ...current, endDate })),
+  };
+}
+
 const getComparisonRanges = () => {
   const today = new Date();
   const yesterday = new Date(today);
@@ -512,10 +556,9 @@ function LoginPage() {
 }
 
 // ─── ADMIN: Dashboard ────────────────────────────────────────────────────────
-function AdminDashboard({ items, users, txns }) {
-  const [period, setPeriod] = useState("weekly");
-  const [startDate, setStartDate] = useState(getStartDateForPeriod("weekly"));
-  const [endDate, setEndDate] = useState(todayString());
+function AdminDashboard({ currentUser, items, users, txns }) {
+  const { period, setPeriod, startDate, setStartDate, endDate, setEndDate } =
+    usePersistedDashboardRange(getDashboardRangeStorageKey("management", currentUser));
   const rangeLabel = getRangeLabel(period, startDate, endDate);
   const filtered = txns.filter(t => inDateRange(t, startDate, endDate));
   const totalRevenue = filtered.reduce((s, t) => s + getTxnRevenue(t), 0);
@@ -1911,9 +1954,8 @@ function AccountSecurity({ user, onChangePassword }) {
 
 // ─── USER: Dashboard ──────────────────────────────────────────────────────────
 function UserDashboard({ currentUser, items, txns }) {
-  const [period, setPeriod] = useState("weekly");
-  const [startDate, setStartDate] = useState(getStartDateForPeriod("weekly"));
-  const [endDate, setEndDate] = useState(todayString());
+  const { period, setPeriod, startDate, setStartDate, endDate, setEndDate } =
+    usePersistedDashboardRange(getDashboardRangeStorageKey("user", currentUser));
   const myTxns = txns.filter(t => t.userId === currentUser.id);
   const rangeLabel = getRangeLabel(period, startDate, endDate);
   const filtered = myTxns.filter(t => inDateRange(t, startDate, endDate));
@@ -2606,7 +2648,7 @@ export default function App() {
         </div>
 
         <div className="content">
-          {page === "dashboard" && canUseManagementDashboard && <AdminDashboard items={items} users={users} txns={txns} />}
+          {page === "dashboard" && canUseManagementDashboard && <AdminDashboard currentUser={user} items={items} users={users} txns={txns} />}
           {page === "dashboard" && !canUseManagementDashboard && <UserDashboard currentUser={user} items={items} txns={txns} />}
           {page === "inventory" && hasPermission(user, "viewInventory") && <AdminInventory items={items} stockAdjustments={stockAdjustments} onAdd={handleAddItem} onEdit={handleEditItem} onDelete={handleDeleteItem} onAdjust={handleAdjustStock} onBulkImport={handleBulkImport} readOnly={!canManageInventory} />}
           {page === "users" && canManageUsers && <AdminUsers users={users} currentUser={user} onAdd={handleAddUser} onEdit={handleEditUser} onDelete={handleDeleteUser} onToggle={handleToggleUser} onResetPassword={handleResetPassword} />}
