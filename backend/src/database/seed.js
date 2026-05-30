@@ -106,5 +106,6 @@ export const createSeedData = async () => {
     notifications: SEED_NOTIFICATIONS.map(notification => ({ ...notification, instanceId: DEFAULT_INSTANCE_ID })),
     refreshTokens: [],
     auditLogs: [],
+    stockAdjustments: [],
   };
 };

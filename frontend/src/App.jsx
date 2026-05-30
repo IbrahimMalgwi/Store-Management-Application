@@ -664,10 +664,12 @@ function AdminDashboard({ items, users, txns }) {
 }
 
 // ─── ADMIN: Inventory ────────────────────────────────────────────────────────
-function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport, readOnly = false }) {
+function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete, onAdjust, onBulkImport, readOnly = false }) {
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState(null); // null | "add" | "edit"
   const [importModal, setImportModal] = useState(false);
+  const [adjustItem, setAdjustItem] = useState(null);
+  const [adjustForm, setAdjustForm] = useState({ mode: "increase", quantity: "", reason: "" });
   const [importFile, setImportFile] = useState(null);
   const [importPreview, setImportPreview] = useState([]);
   const [form, setForm] = useState({ sku: "", name: "", qty: "", amount: "", purchaseCost: "", category: "General", supplier: "", description: "" });
@@ -704,6 +706,21 @@ function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport, readOnly
       } catch (err) {
         alert(err.message || "Error deleting item");
       }
+    }
+  };
+
+  const openAdjust = (item) => {
+    setAdjustItem(item);
+    setAdjustForm({ mode: "increase", quantity: "", reason: "" });
+  };
+
+  const submitAdjustment = async () => {
+    if (!adjustItem || !adjustForm.quantity) return;
+    try {
+      await onAdjust(adjustItem.id, adjustForm);
+      setAdjustItem(null);
+    } catch (err) {
+      alert(err.message || "Error adjusting stock");
     }
   };
 
@@ -778,6 +795,7 @@ function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport, readOnly
                   {!readOnly && <td>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button className="btn btn-sm btn-secondary" onClick={() => openEdit(item)}>{I.edit}</button>
+                      <button className="btn btn-sm btn-secondary" onClick={() => openAdjust(item)}>Adjust</button>
                       <button className="btn btn-sm btn-danger" onClick={() => del(item.id)}>{I.del}</button>
                     </div>
                   </td>}
@@ -796,6 +814,58 @@ function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport, readOnly
           <div className="form-row">{renderField({ label: "Selling Price (₦)", field: "amount", type: "number", placeholder: "0.00" })}<div className="form-group"><label>Unit Profit</label><input value={fmt((Number(form.amount) || 0) - (Number(form.purchaseCost) || 0))} readOnly /></div></div>
           {renderField({ label: "Description", field: "description", placeholder: "Item description" })}
         </Modal>
+      )}
+
+      {adjustItem && (
+        <Modal title={`Adjust Stock: ${adjustItem.name}`} onClose={() => setAdjustItem(null)}
+          footer={<><button className="btn btn-secondary" onClick={() => setAdjustItem(null)}>Cancel</button><button className="btn btn-primary" onClick={submitAdjustment}>Save Adjustment</button></>}>
+          <div className="stock-adjust-summary">
+            <div><span>Current Stock</span><strong>{adjustItem.qty}</strong></div>
+            <div><span>SKU</span><strong>{adjustItem.sku}</strong></div>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label>Adjustment Type</label>
+              <select value={adjustForm.mode} onChange={e => setAdjustForm(f => ({ ...f, mode: e.target.value }))}>
+                <option value="increase">Increase Stock</option>
+                <option value="decrease">Decrease Stock</option>
+                <option value="set">Set Exact Stock</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>{adjustForm.mode === "set" ? "New Quantity" : "Quantity"}</label>
+              <input type="number" min="1" value={adjustForm.quantity} onChange={e => setAdjustForm(f => ({ ...f, quantity: e.target.value }))} placeholder="0" />
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Reason</label>
+            <textarea value={adjustForm.reason} onChange={e => setAdjustForm(f => ({ ...f, reason: e.target.value }))} placeholder="Damaged goods, stock count correction, returned stock..." />
+          </div>
+        </Modal>
+      )}
+
+      {!readOnly && (
+        <div className="table-card" style={{ marginTop: 14 }}>
+          <div className="table-header"><h3>Recent Stock Adjustments</h3></div>
+          <table>
+            <thead><tr><th>Date</th><th>Item</th><th>Type</th><th>Before</th><th>Change</th><th>After</th><th>Reason</th><th>By</th></tr></thead>
+            <tbody>
+              {stockAdjustments.length === 0 ? <tr><td colSpan={8}><div className="empty">No stock adjustments yet</div></td></tr> :
+                stockAdjustments.slice(0, 20).map(adjustment => (
+                  <tr key={adjustment.id}>
+                    <td style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{new Date(adjustment.createdAt).toLocaleString()}</td>
+                    <td><div style={{ color: "var(--text)", fontWeight: 600 }}>{adjustment.itemName}</div><span className="badge-pill gray">{adjustment.sku}</span></td>
+                    <td><span className={`badge-pill ${adjustment.change < 0 ? "orange" : "green"}`}>{adjustment.type}</span></td>
+                    <td>{adjustment.previousQty}</td>
+                    <td style={{ color: adjustment.change < 0 ? "var(--warn)" : "var(--accent)", fontFamily: "var(--mono)" }}>{adjustment.change > 0 ? `+${adjustment.change}` : adjustment.change}</td>
+                    <td>{adjustment.newQty}</td>
+                    <td>{adjustment.reason || "-"}</td>
+                    <td>{adjustment.actorName}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {importModal && (
@@ -1855,6 +1925,7 @@ export default function App() {
   const [items, setItems] = useState([]);
   const [users, setUsers] = useState([]);
   const [txns, setTxns] = useState([]);
+  const [stockAdjustments, setStockAdjustments] = useState([]);
   const [businessProfile, setBusinessProfile] = useState(DEFAULT_BUSINESS_PROFILE);
   const [license, setLicense] = useState(user?.license || DEFAULT_LICENSE);
   const [receiptSettings, setReceiptSettings] = useState(DEFAULT_RECEIPT_SETTINGS);
@@ -1870,6 +1941,11 @@ export default function App() {
     try {
       const itemsData = await api.get("/inventory");
       setItems(itemsData);
+
+      if (hasPermission(user, "manageInventory")) {
+        const adjustmentsData = await api.get("/inventory/adjustments");
+        setStockAdjustments(adjustmentsData);
+      }
 
       const txnsData = await api.get("/transactions");
       setTxns(txnsData);
@@ -1919,6 +1995,11 @@ export default function App() {
   const handleDeleteItem = async (id) => {
     await api.delete(`/inventory/${id}`);
     fetchData();
+  };
+
+  const handleAdjustStock = async (id, form) => {
+    await api.post(`/inventory/${id}/adjust`, form);
+    await fetchData();
   };
 
   const handleBulkImport = async (itemsToImport) => {
@@ -2142,7 +2223,7 @@ export default function App() {
         <div className="content">
           {page === "dashboard" && canUseManagementDashboard && <AdminDashboard items={items} users={users} txns={txns} />}
           {page === "dashboard" && !canUseManagementDashboard && <UserDashboard currentUser={user} items={items} txns={txns} />}
-          {page === "inventory" && hasPermission(user, "viewInventory") && <AdminInventory items={items} onAdd={handleAddItem} onEdit={handleEditItem} onDelete={handleDeleteItem} onBulkImport={handleBulkImport} readOnly={!canManageInventory} />}
+          {page === "inventory" && hasPermission(user, "viewInventory") && <AdminInventory items={items} stockAdjustments={stockAdjustments} onAdd={handleAddItem} onEdit={handleEditItem} onDelete={handleDeleteItem} onAdjust={handleAdjustStock} onBulkImport={handleBulkImport} readOnly={!canManageInventory} />}
           {page === "users" && canManageUsers && <AdminUsers users={users} currentUser={user} onAdd={handleAddUser} onEdit={handleEditUser} onDelete={handleDeleteUser} onToggle={handleToggleUser} onResetPassword={handleResetPassword} />}
           {page === "transactions" && canViewAllTransactions && <AdminTransactions txns={txns} onPrintReceipt={handlePrintReceipt} canPrint={canPrint} />}
           {page === "data" && canViewAllTransactions && <AdminDataTools txns={txns} onClearHistory={handleClearHistory} onResetFresh={handleResetFresh} onResetDemo={handleResetDemo} canManageData={canManageData} />}

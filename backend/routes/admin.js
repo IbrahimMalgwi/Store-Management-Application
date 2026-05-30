@@ -59,12 +59,14 @@ router.post("/reset", async (req, res) => {
       ...seed.notifications.map(notification => ({ ...notification, instanceId: req.user.instanceId })),
     ];
     const refreshTokens = (db.refreshTokens || []).filter(token => token.instanceId !== req.user.instanceId);
+    const stockAdjustments = (db.stockAdjustments || []).filter(adjustment => adjustment.instanceId !== req.user.instanceId);
 
     saveCollection("items", items);
     saveCollection("users", users);
     saveCollection("txns", txns);
     saveCollection("notifications", notifications);
     saveCollection("refreshTokens", refreshTokens);
+    saveCollection("stockAdjustments", stockAdjustments);
     recordAuditLog({
       req,
       action: "admin.reset_demo",
@@ -85,12 +87,14 @@ router.post("/reset", async (req, res) => {
   const txns = db.txns.filter(txn => txn.instanceId !== req.user.instanceId);
   const notifications = db.notifications.filter(notification => notification.instanceId !== req.user.instanceId);
   const refreshTokens = (db.refreshTokens || []).filter(token => token.instanceId !== req.user.instanceId);
+  const stockAdjustments = (db.stockAdjustments || []).filter(adjustment => adjustment.instanceId !== req.user.instanceId);
 
   saveCollection("items", items);
   saveCollection("users", users);
   saveCollection("txns", txns);
   saveCollection("notifications", notifications);
   saveCollection("refreshTokens", refreshTokens);
+  saveCollection("stockAdjustments", stockAdjustments);
   recordAuditLog({
     req,
     action: "admin.reset_fresh",

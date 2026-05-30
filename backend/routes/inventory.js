@@ -2,6 +2,7 @@ import express from "express";
 import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, requirePermission } from "../middleware/auth.js";
 import { recordAuditLog } from "../src/audit.js";
+import { recordStockAdjustment } from "../src/stockAdjustments.js";
 
 const router = express.Router();
 
@@ -20,6 +21,17 @@ const cleanItemInput = (body = {}) => ({
 router.get("/", authenticateToken, (req, res) => {
   const db = getDB();
   res.json(db.items.filter(item => item.instanceId === req.user.instanceId));
+});
+
+router.get("/adjustments", authenticateToken, requirePermission("manageInventory"), (req, res) => {
+  const limit = Math.min(Number.parseInt(req.query.limit || "200", 10) || 200, 1000);
+  const db = getDB();
+  const adjustments = (db.stockAdjustments || [])
+    .filter(adjustment => adjustment.instanceId === req.user.instanceId)
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .slice(0, limit);
+
+  res.json(adjustments);
 });
 
 // POST add new item (Admin only)
@@ -54,6 +66,17 @@ router.post("/", authenticateToken, requirePermission("manageInventory"), (req, 
 
   db.items.push(newItem);
   saveCollection("items", db.items);
+  recordStockAdjustment({
+    db,
+    req,
+    item: newItem,
+    previousQty: 0,
+    newQty: newItem.qty,
+    type: "initial_stock",
+    reason: "Item created",
+    referenceType: "item",
+    referenceId: newItem.id,
+  });
   recordAuditLog({
     req,
     action: "inventory.create",
@@ -76,6 +99,8 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
 
   const db = getDB();
   const errors = [];
+  const pendingAdjustments = [];
+  const workingItems = db.items.map(item => ({ ...item }));
   let created = 0;
   let updated = 0;
 
@@ -88,9 +113,10 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
       return;
     }
 
-    const existing = db.items.find(item => item.instanceId === req.user.instanceId && item.sku.toLowerCase() === sku.toLowerCase());
+    const existing = workingItems.find(item => item.instanceId === req.user.instanceId && item.sku.toLowerCase() === sku.toLowerCase());
 
     if (existing) {
+      const previousQty = existing.qty;
       existing.name = name;
       existing.qty += qty;
       existing.amount = amount;
@@ -98,11 +124,21 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
       existing.category = category;
       existing.supplier = supplier;
       existing.description = description;
+      pendingAdjustments.push({
+        db,
+        req,
+        item: existing,
+        previousQty,
+        newQty: existing.qty,
+        type: "bulk_import",
+        reason: "Bulk stock import",
+        referenceType: "import",
+      });
       updated += 1;
       return;
     }
 
-    db.items.push({
+    const newItem = {
       id: Date.now() + index,
       instanceId: req.user.instanceId,
       sku,
@@ -114,6 +150,18 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
       supplier,
       description,
       sold: 0,
+    };
+
+    workingItems.push(newItem);
+    pendingAdjustments.push({
+      db,
+      req,
+      item: newItem,
+      previousQty: 0,
+      newQty: newItem.qty,
+      type: "bulk_import",
+      reason: "Bulk stock import",
+      referenceType: "import",
     });
     created += 1;
   });
@@ -122,7 +170,9 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
     return res.status(400).json({ message: "Some rows are invalid", errors });
   }
 
+  db.items = workingItems;
   saveCollection("items", db.items);
+  pendingAdjustments.forEach(recordStockAdjustment);
   recordAuditLog({
     req,
     action: "inventory.bulk_import",
@@ -170,6 +220,17 @@ router.put("/:id", authenticateToken, requirePermission("manageInventory"), (req
 
   db.items[index] = updatedItem;
   saveCollection("items", db.items);
+  recordStockAdjustment({
+    db,
+    req,
+    item: updatedItem,
+    previousQty: previousItem.qty,
+    newQty: updatedItem.qty,
+    type: "item_update",
+    reason: "Inventory item edited",
+    referenceType: "item",
+    referenceId: updatedItem.id,
+  });
   recordAuditLog({
     req,
     action: "inventory.update",
@@ -177,6 +238,64 @@ router.put("/:id", authenticateToken, requirePermission("manageInventory"), (req
     entityId: updatedItem.id,
     summary: `Updated item ${updatedItem.sku} - ${updatedItem.name}`,
     metadata: { before: previousItem, after: updatedItem },
+  });
+
+  res.json(updatedItem);
+});
+
+router.post("/:id/adjust", authenticateToken, requirePermission("manageInventory"), (req, res) => {
+  const itemId = Number(req.params.id);
+  const { mode = "increase", quantity, reason } = req.body;
+  const amount = Number(quantity);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ message: "Adjustment quantity must be greater than zero" });
+  }
+
+  if (!["increase", "decrease", "set"].includes(mode)) {
+    return res.status(400).json({ message: "Adjustment mode must be increase, decrease, or set" });
+  }
+
+  const db = getDB();
+  const index = db.items.findIndex(item => item.id === itemId && item.instanceId === req.user.instanceId);
+
+  if (index === -1) {
+    return res.status(404).json({ message: "Item not found" });
+  }
+
+  const previousItem = db.items[index];
+  const previousQty = previousItem.qty;
+  const nextQty = mode === "increase"
+    ? previousQty + amount
+    : mode === "decrease"
+      ? previousQty - amount
+      : amount;
+
+  if (nextQty < 0) {
+    return res.status(400).json({ message: "Adjustment would make stock negative" });
+  }
+
+  const updatedItem = { ...previousItem, qty: nextQty };
+  db.items[index] = updatedItem;
+  saveCollection("items", db.items);
+  recordStockAdjustment({
+    db,
+    req,
+    item: updatedItem,
+    previousQty,
+    newQty: nextQty,
+    type: `manual_${mode}`,
+    reason: reason || "Manual stock adjustment",
+    referenceType: "manual",
+    referenceId: updatedItem.id,
+  });
+  recordAuditLog({
+    req,
+    action: "inventory.stock_adjust",
+    entityType: "item",
+    entityId: updatedItem.id,
+    summary: `Adjusted stock for ${updatedItem.sku} from ${previousQty} to ${nextQty}`,
+    metadata: { mode, previousQty, newQty: nextQty, reason },
   });
 
   res.json(updatedItem);
@@ -194,6 +313,17 @@ router.delete("/:id", authenticateToken, requirePermission("manageInventory"), (
 
   const [deletedItem] = db.items.splice(index, 1);
   saveCollection("items", db.items);
+  recordStockAdjustment({
+    db,
+    req,
+    item: deletedItem,
+    previousQty: deletedItem.qty,
+    newQty: 0,
+    type: "item_delete",
+    reason: "Item deleted",
+    referenceType: "item",
+    referenceId: deletedItem.id,
+  });
   recordAuditLog({
     req,
     action: "inventory.delete",

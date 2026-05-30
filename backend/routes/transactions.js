@@ -3,6 +3,7 @@ import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, hasPermission, requirePermission } from "../middleware/auth.js";
 import { recordAuditLog } from "../src/audit.js";
 import { reserveReceiptNumber } from "../src/receiptNumbering.js";
+import { recordStockAdjustment } from "../src/stockAdjustments.js";
 
 const router = express.Router();
 
@@ -71,6 +72,7 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
   }
 
   const newTxns = [];
+  const stockDeductions = [];
 
   // Process deduction and transaction creation
   db.items = db.items.map(item => {
@@ -105,11 +107,18 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
       });
 
       // Update inventory stock
-      return {
+      const nextItem = {
         ...item,
         qty: item.qty - cartItem.qty,
         sold: item.sold + cartItem.qty
       };
+      stockDeductions.push({
+        item: nextItem,
+        previousQty: item.qty,
+        newQty: nextItem.qty,
+        referenceId: saleId,
+      });
+      return nextItem;
     }
     return item;
   });
@@ -120,6 +129,19 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
   saveCollection("items", db.items);
   saveCollection("txns", db.txns);
   saveCollection("instances", db.instances);
+  stockDeductions.forEach(({ item, previousQty, newQty, referenceId }) => {
+    recordStockAdjustment({
+      db,
+      req,
+      item,
+      previousQty,
+      newQty,
+      type: "sale",
+      reason: `Sale ${referenceId}`,
+      referenceType: "sale",
+      referenceId,
+    });
+  });
   recordAuditLog({
     req,
     action: "sale.create",
