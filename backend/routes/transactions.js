@@ -5,14 +5,9 @@ import { recordAuditLog } from "../src/audit.js";
 import { reserveReceiptNumber } from "../src/receiptNumbering.js";
 import { recordStockAdjustment } from "../src/stockAdjustments.js";
 import { syncLowStockAlert } from "../src/lowStockAlerts.js";
+import { resolveSaleCustomer } from "../src/customers.js";
 
 const router = express.Router();
-
-const sanitizeCustomer = (customer = {}) => ({
-  name: String(customer.name || "").trim(),
-  address: String(customer.address || "").trim(),
-  contact: String(customer.contact || "").trim(),
-});
 
 const fallbackBusinessProfile = (profile) => ({
   businessName: profile?.businessName || "StockOS",
@@ -41,18 +36,46 @@ router.get("/", authenticateToken, (req, res) => {
 
 // POST create transaction (Make a sale)
 router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
-  const { cartItems, customer } = req.body;
-  const customerDetails = sanitizeCustomer(customer);
+  const { cartItems, customer, customerId } = req.body;
 
   if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0) {
     return res.status(400).json({ message: "Cart items are required to make a sale" });
   }
 
-  if (!customerDetails.name || !customerDetails.address || !customerDetails.contact) {
-    return res.status(400).json({ message: "Customer name, address, and contact are required for the receipt" });
+  const db = getDB();
+  let customerDetails = resolveSaleCustomer({ db, req, customerId, customer });
+
+  if (customerId && !customerDetails) {
+    return res.status(404).json({ message: "Customer record not found" });
   }
 
-  const db = getDB();
+  if (!customerDetails?.name || !customerDetails.address || !customerDetails.contact) {
+    return res.status(400).json({ message: "Customer name, address, and a phone number or email address are required for the receipt" });
+  }
+
+  if (!customerDetails.id) {
+    const now = new Date().toISOString();
+    const newCustomer = {
+      ...customerDetails,
+      id: Date.now() + Math.random(),
+      instanceId: req.user.instanceId,
+      createdBy: req.user.id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    db.customers.push(newCustomer);
+    saveCollection("customers", db.customers);
+    customerDetails = newCustomer;
+    recordAuditLog({
+      req,
+      action: "customer.create",
+      entityType: "customer",
+      entityId: newCustomer.id,
+      summary: `Created customer ${newCustomer.name} during sale`,
+      metadata: { name: newCustomer.name, phone: newCustomer.phone, email: newCustomer.email },
+    });
+  }
+
   const instance = db.instances.find(item => item.id === req.user.instanceId);
   const businessProfile = fallbackBusinessProfile(instance?.businessProfile);
   const now = new Date();
@@ -97,6 +120,7 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
         category: item.category || "General",
         supplier: item.supplier || "",
         customer: customerDetails,
+        customerId: customerDetails.id,
         businessProfile,
         receiptPrinted: false,
         receiptPrintedAt: null,
@@ -166,6 +190,7 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
       id: saleId,
       receiptNo: saleId,
       customer: customerDetails,
+      customerId: customerDetails.id,
       businessProfile,
       transactions: newTxns,
       total: newTxns.reduce((sum, txn) => sum + txn.amount, 0),

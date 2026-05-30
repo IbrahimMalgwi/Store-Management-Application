@@ -60,6 +60,7 @@ router.post("/reset", async (req, res) => {
     ];
     const refreshTokens = (db.refreshTokens || []).filter(token => token.instanceId !== req.user.instanceId);
     const stockAdjustments = (db.stockAdjustments || []).filter(adjustment => adjustment.instanceId !== req.user.instanceId);
+    const customers = (db.customers || []).filter(customer => customer.instanceId !== req.user.instanceId);
 
     saveCollection("items", items);
     saveCollection("users", users);
@@ -67,6 +68,7 @@ router.post("/reset", async (req, res) => {
     saveCollection("notifications", notifications);
     saveCollection("refreshTokens", refreshTokens);
     saveCollection("stockAdjustments", stockAdjustments);
+    saveCollection("customers", customers);
     recordAuditLog({
       req,
       action: "admin.reset_demo",
@@ -88,6 +90,7 @@ router.post("/reset", async (req, res) => {
   const notifications = db.notifications.filter(notification => notification.instanceId !== req.user.instanceId);
   const refreshTokens = (db.refreshTokens || []).filter(token => token.instanceId !== req.user.instanceId);
   const stockAdjustments = (db.stockAdjustments || []).filter(adjustment => adjustment.instanceId !== req.user.instanceId);
+  const customers = (db.customers || []).filter(customer => customer.instanceId !== req.user.instanceId);
 
   saveCollection("items", items);
   saveCollection("users", users);
@@ -95,6 +98,7 @@ router.post("/reset", async (req, res) => {
   saveCollection("notifications", notifications);
   saveCollection("refreshTokens", refreshTokens);
   saveCollection("stockAdjustments", stockAdjustments);
+  saveCollection("customers", customers);
   recordAuditLog({
     req,
     action: "admin.reset_fresh",

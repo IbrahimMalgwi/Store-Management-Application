@@ -64,9 +64,9 @@ const ROLE_LABELS = {
 };
 
 const ROLE_PERMISSIONS = {
-  owner: ["viewReports", "viewInventory", "manageInventory", "viewAllTransactions", "sell", "printReceipts", "reprintReceipts", "manageUsers", "manageSettings", "manageData"],
-  manager: ["viewReports", "viewInventory", "manageInventory", "viewAllTransactions", "sell", "printReceipts", "reprintReceipts"],
-  cashier: ["viewOwnReports", "viewInventory", "sell", "printReceipts"],
+  owner: ["viewReports", "viewInventory", "manageInventory", "viewAllTransactions", "sell", "printReceipts", "reprintReceipts", "manageUsers", "manageSettings", "manageData", "viewCustomers", "createCustomers", "manageCustomers"],
+  manager: ["viewReports", "viewInventory", "manageInventory", "viewAllTransactions", "sell", "printReceipts", "reprintReceipts", "viewCustomers", "createCustomers", "manageCustomers"],
+  cashier: ["viewOwnReports", "viewInventory", "sell", "printReceipts", "viewCustomers", "createCustomers"],
   viewer: ["viewReports", "viewInventory", "viewAllTransactions"],
 };
 
@@ -1058,6 +1058,107 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
   );
 }
 
+// ─── CUSTOMERS ────────────────────────────────────────────────────────────────
+function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
+  const emptyForm = { name: "", phone: "", email: "", address: "" };
+  const [search, setSearch] = useState("");
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+  const [editId, setEditId] = useState(null);
+  const query = search.toLowerCase();
+  const filtered = customers.filter(customer =>
+    customer.name.toLowerCase().includes(query)
+    || String(customer.phone || "").toLowerCase().includes(query)
+    || String(customer.email || "").toLowerCase().includes(query)
+    || customer.address.toLowerCase().includes(query)
+  );
+
+  const openAdd = () => {
+    setForm(emptyForm);
+    setEditId(null);
+    setModal("add");
+  };
+
+  const openEdit = (customer) => {
+    setForm({ name: customer.name, phone: customer.phone || "", email: customer.email || "", address: customer.address });
+    setEditId(customer.id);
+    setModal("edit");
+  };
+
+  const save = async () => {
+    if (!form.name.trim() || !form.address.trim() || (!form.phone.trim() && !form.email.trim())) return;
+    try {
+      if (modal === "edit") {
+        await onEdit(editId, form);
+      } else {
+        await onAdd(form);
+      }
+      setModal(null);
+    } catch (err) {
+      alert(err.message || "Error saving customer");
+    }
+  };
+
+  const del = async (id) => {
+    if (!confirm("Delete this customer record? Past receipts will keep their customer snapshot.")) return;
+    try {
+      await onDelete(id);
+    } catch (err) {
+      alert(err.message || "Error deleting customer");
+    }
+  };
+
+  return (
+    <>
+      <div className="section-header">
+        <h2>Customers</h2>
+        <div style={{ display: "flex", gap: 8 }}>
+          <div className="search-wrap">
+            <span className="search-icon">{I.search}</span>
+            <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search customers…" style={{ width: 220 }} />
+          </div>
+          <button className="btn btn-primary" onClick={openAdd}>{I.add} Add Customer</button>
+        </div>
+      </div>
+
+      <div className="table-card">
+        <table>
+          <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Address</th>{canManage && <th>Actions</th>}</tr></thead>
+          <tbody>
+            {filtered.length === 0 ? <tr><td colSpan={canManage ? 5 : 4}><div className="empty">No customers found</div></td></tr> :
+              filtered.map(customer => (
+                <tr key={customer.id}>
+                  <td style={{ color: "var(--text)", fontWeight: 600 }}>{customer.name}</td>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{customer.phone || "-"}</td>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{customer.email || "-"}</td>
+                  <td>{customer.address}</td>
+                  {canManage && <td>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="btn btn-sm btn-secondary" onClick={() => openEdit(customer)}>{I.edit}</button>
+                      <button className="btn btn-sm btn-danger" onClick={() => del(customer.id)}>{I.del}</button>
+                    </div>
+                  </td>}
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+
+      {modal && (
+        <Modal title={modal === "edit" ? "Edit Customer" : "Add Customer"} onClose={() => setModal(null)}
+          footer={<><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Customer</button></>}>
+          <div className="form-group"><label>Customer Name</label><input value={form.name} onChange={event => setForm(current => ({ ...current, name: event.target.value }))} placeholder="Full name or business name" /></div>
+          <div className="form-row">
+            <div className="form-group"><label>Phone Number</label><input value={form.phone} onChange={event => setForm(current => ({ ...current, phone: event.target.value }))} placeholder="Phone number" /></div>
+            <div className="form-group"><label>Email Address</label><input type="email" value={form.email} onChange={event => setForm(current => ({ ...current, email: event.target.value }))} placeholder="customer@example.com" /></div>
+          </div>
+          <div className="form-group"><label>Address</label><textarea value={form.address} onChange={event => setForm(current => ({ ...current, address: event.target.value }))} placeholder="Customer address" /></div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 // ─── ADMIN: Transactions ──────────────────────────────────────────────────────
 function AdminTransactions({ txns, onPrintReceipt, canPrint = false }) {
   const [search, setSearch] = useState("");
@@ -1767,9 +1868,10 @@ function UserReceipts({ txns, onPrintReceipt }) {
 }
 
 // ─── USER: Make a Sale ────────────────────────────────────────────────────────
-function UserSell({ items, onSell, onPrintReceipt }) {
+function UserSell({ items, customers, onSell, onPrintReceipt }) {
   const [cart, setCart] = useState({});
-  const [customer, setCustomer] = useState({ name: "", address: "", contact: "" });
+  const [customerId, setCustomerId] = useState("");
+  const [customer, setCustomer] = useState({ name: "", address: "", phone: "", email: "" });
   const [confirm, setConfirm] = useState(false);
   const [done, setDone] = useState(false);
   const [lastReceipt, setLastReceipt] = useState(null);
@@ -1777,7 +1879,15 @@ function UserSell({ items, onSell, onPrintReceipt }) {
   const available = items.filter(i => i.qty > 0);
   const cartItems = Object.entries(cart).filter(([, q]) => q > 0).map(([id, qty]) => ({ ...items.find(i => i.id === +id), qty }));
   const total = cartItems.reduce((s, i) => s + i.amount * i.qty, 0);
-  const customerComplete = customer.name.trim() && customer.address.trim() && customer.contact.trim();
+  const customerComplete = customer.name.trim() && customer.address.trim() && (customer.phone.trim() || customer.email.trim());
+
+  const selectCustomer = (id) => {
+    setCustomerId(id);
+    const selected = customers.find(item => String(item.id) === String(id));
+    setCustomer(selected
+      ? { name: selected.name, address: selected.address, phone: selected.phone || "", email: selected.email || "" }
+      : { name: "", address: "", phone: "", email: "" });
+  };
 
   const set = (id, delta) => {
     const item = items.find(i => i.id === id);
@@ -1789,14 +1899,15 @@ function UserSell({ items, onSell, onPrintReceipt }) {
   const submit = async () => {
     if (cartItems.length === 0) return;
     if (!customerComplete) {
-      alert("Customer name, address, and contact are required for the receipt.");
+      alert("Customer name, address, and a phone number or email address are required for the receipt.");
       return;
     }
     try {
-      const result = await onSell(cartItems.map(ci => ({ id: ci.id, qty: ci.qty })), customer);
+      const result = await onSell(cartItems.map(ci => ({ id: ci.id, qty: ci.qty })), customerId, customer);
       setLastReceipt(result.receipt);
       setCart({});
-      setCustomer({ name: "", address: "", contact: "" });
+      setCustomerId("");
+      setCustomer({ name: "", address: "", phone: "", email: "" });
       setConfirm(false);
       setDone(true);
       setTimeout(() => setDone(false), 3000);
@@ -1872,19 +1983,30 @@ function UserSell({ items, onSell, onPrintReceipt }) {
       {confirm && (
         <Modal title="Confirm Sale" onClose={() => setConfirm(false)}
           footer={<><button className="btn btn-secondary" onClick={() => setConfirm(false)}>Cancel</button><button className="btn btn-primary" onClick={submit} disabled={!customerComplete}>Complete Sale</button></>}>
+          <div className="form-group">
+            <label>Customer Record</label>
+            <select value={customerId} onChange={event => selectCustomer(event.target.value)}>
+              <option value="">Create New Customer</option>
+              {customers.map(item => <option key={item.id} value={item.id}>{item.name} - {item.phone || item.email}</option>)}
+            </select>
+          </div>
           <div className="form-row">
             <div className="form-group">
               <label>Customer Name</label>
-              <input value={customer.name} onChange={e => setCustomer(c => ({ ...c, name: e.target.value }))} placeholder="Customer full name" />
+              <input value={customer.name} onChange={e => setCustomer(c => ({ ...c, name: e.target.value }))} placeholder="Customer full name" disabled={Boolean(customerId)} />
             </div>
             <div className="form-group">
-              <label>Customer Contact</label>
-              <input value={customer.contact} onChange={e => setCustomer(c => ({ ...c, contact: e.target.value }))} placeholder="Phone or email" />
+              <label>Phone Number</label>
+              <input value={customer.phone} onChange={e => setCustomer(c => ({ ...c, phone: e.target.value }))} placeholder="Phone number" disabled={Boolean(customerId)} />
             </div>
           </div>
           <div className="form-group">
+            <label>Email Address</label>
+            <input type="email" value={customer.email} onChange={e => setCustomer(c => ({ ...c, email: e.target.value }))} placeholder="customer@example.com" disabled={Boolean(customerId)} />
+          </div>
+          <div className="form-group">
             <label>Customer Address</label>
-            <textarea value={customer.address} onChange={e => setCustomer(c => ({ ...c, address: e.target.value }))} placeholder="Customer address" />
+            <textarea value={customer.address} onChange={e => setCustomer(c => ({ ...c, address: e.target.value }))} placeholder="Customer address" disabled={Boolean(customerId)} />
           </div>
           <p style={{ fontSize: 13, color: "var(--text2)", marginBottom: 16 }}>You are about to complete a sale of <strong style={{ color: "var(--accent)" }}>{fmt(total)}</strong> for {cartItems.length} item(s).</p>
           {cartItems.map(ci => (
@@ -1940,6 +2062,7 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [txns, setTxns] = useState([]);
   const [stockAdjustments, setStockAdjustments] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [businessProfile, setBusinessProfile] = useState(DEFAULT_BUSINESS_PROFILE);
   const [license, setLicense] = useState(user?.license || DEFAULT_LICENSE);
   const [receiptSettings, setReceiptSettings] = useState(DEFAULT_RECEIPT_SETTINGS);
@@ -1963,6 +2086,11 @@ export default function App() {
 
       const txnsData = await api.get("/transactions");
       setTxns(txnsData);
+
+      if (hasPermission(user, "viewCustomers")) {
+        const customersData = await api.get("/customers");
+        setCustomers(customersData);
+      }
 
       const notifsData = await api.get("/notifications");
       setNotifications(notifsData);
@@ -2071,10 +2199,27 @@ export default function App() {
   };
 
   // Transaction API Operations
-  const handleSell = async (cartItems, customer) => {
-    const result = await api.post("/transactions", { cartItems, customer });
+  const handleSell = async (cartItems, customerId, customer) => {
+    const result = await api.post("/transactions", { cartItems, customerId, customer });
     await fetchData();
     return result;
+  };
+
+  const handleAddCustomer = async (form) => {
+    const result = await api.post("/customers", form);
+    await fetchData();
+    return result;
+  };
+
+  const handleEditCustomer = async (id, form) => {
+    const result = await api.put(`/customers/${id}`, form);
+    await fetchData();
+    return result;
+  };
+
+  const handleDeleteCustomer = async (id) => {
+    await api.delete(`/customers/${id}`);
+    await fetchData();
   };
 
   const handleSaveBusinessProfile = async (profile) => {
@@ -2164,6 +2309,8 @@ export default function App() {
   const canPrint = hasPermission(user, "printReceipts");
   const canManageSettings = hasPermission(user, "manageSettings");
   const canManageData = hasPermission(user, "manageData");
+  const canViewCustomers = hasPermission(user, "viewCustomers");
+  const canManageCustomers = hasPermission(user, "manageCustomers");
   const canUseManagementDashboard = canViewReports || canViewAllTransactions;
   const avatarColor = canUseManagementDashboard ? "rgba(199,125,255,0.15)" : "rgba(0,144,255,0.15)";
   const avatarText = user.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
@@ -2172,6 +2319,7 @@ export default function App() {
     { id: "dashboard", label: "Dashboard", icon: I.dash, show: true },
     { id: "inventory", label: "Inventory", icon: I.items, show: canManageInventory || hasPermission(user, "viewInventory") },
     { id: "users", label: "Users", icon: I.users, show: canManageUsers },
+    { id: "customers", label: "Customers", icon: I.users, show: canViewCustomers },
     { id: "transactions", label: "Transactions", icon: I.txn, show: canViewAllTransactions },
     { id: "data", label: "Data Tools", icon: I.chart, show: canViewAllTransactions },
     { id: "audit", label: "Audit Logs", icon: I.eye, show: canManageData },
@@ -2182,7 +2330,7 @@ export default function App() {
     { id: "settings", label: "Settings", icon: I.settings, show: canManageSettings },
   ].filter(item => item.show);
 
-  const topbarTitles = { dashboard: "Dashboard", inventory: "Inventory", users: "Users", transactions: "Transactions", data: "Data Tools", audit: "Audit Logs", sell: "Make a Sale", receipts: "Receipts", store: "Store Items", account: "Account", settings: "Settings" };
+  const topbarTitles = { dashboard: "Dashboard", inventory: "Inventory", users: "Users", customers: "Customers", transactions: "Transactions", data: "Data Tools", audit: "Audit Logs", sell: "Make a Sale", receipts: "Receipts", store: "Store Items", account: "Account", settings: "Settings" };
 
   return (
     <div className="app">
@@ -2239,12 +2387,13 @@ export default function App() {
           {page === "dashboard" && !canUseManagementDashboard && <UserDashboard currentUser={user} items={items} txns={txns} />}
           {page === "inventory" && hasPermission(user, "viewInventory") && <AdminInventory items={items} stockAdjustments={stockAdjustments} onAdd={handleAddItem} onEdit={handleEditItem} onDelete={handleDeleteItem} onAdjust={handleAdjustStock} onBulkImport={handleBulkImport} readOnly={!canManageInventory} />}
           {page === "users" && canManageUsers && <AdminUsers users={users} currentUser={user} onAdd={handleAddUser} onEdit={handleEditUser} onDelete={handleDeleteUser} onToggle={handleToggleUser} onResetPassword={handleResetPassword} />}
+          {page === "customers" && canViewCustomers && <Customers customers={customers} onAdd={handleAddCustomer} onEdit={handleEditCustomer} onDelete={handleDeleteCustomer} canManage={canManageCustomers} />}
           {page === "transactions" && canViewAllTransactions && <AdminTransactions txns={txns} onPrintReceipt={handlePrintReceipt} canPrint={canPrint} />}
           {page === "data" && canViewAllTransactions && <AdminDataTools txns={txns} onClearHistory={handleClearHistory} onResetFresh={handleResetFresh} onResetDemo={handleResetDemo} canManageData={canManageData} />}
           {page === "audit" && canManageData && <AdminAuditLogs logs={auditLogs} />}
           {page === "settings" && canManageSettings && <BusinessSettings key={`${JSON.stringify(businessProfile)}-${JSON.stringify(license)}-${JSON.stringify(receiptSettings)}`} businessProfile={businessProfile} license={license} receiptSettings={receiptSettings} user={user} onSaveProfile={handleSaveBusinessProfile} onSaveLicense={handleSaveLicense} onSaveReceiptSettings={handleSaveReceiptSettings} />}
           {page === "account" && <AccountSecurity user={user} onChangePassword={handleChangePassword} />}
-          {page === "sell" && canSell && <UserSell items={items} onSell={handleSell} onPrintReceipt={handlePrintReceipt} />}
+          {page === "sell" && canSell && <UserSell items={items} customers={customers} onSell={handleSell} onPrintReceipt={handlePrintReceipt} />}
           {page === "receipts" && !canViewAllTransactions && canPrint && <UserReceipts txns={txns} onPrintReceipt={handlePrintReceipt} />}
           {page === "store" && hasPermission(user, "viewInventory") && <UserStore items={items} />}
         </div>

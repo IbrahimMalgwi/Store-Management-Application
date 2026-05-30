@@ -15,6 +15,9 @@ export const ROLE_PERMISSIONS = {
     "manageUsers",
     "manageSettings",
     "manageData",
+    "viewCustomers",
+    "createCustomers",
+    "manageCustomers",
   ],
   manager: [
     "viewReports",
@@ -24,12 +27,17 @@ export const ROLE_PERMISSIONS = {
     "sell",
     "printReceipts",
     "reprintReceipts",
+    "viewCustomers",
+    "createCustomers",
+    "manageCustomers",
   ],
   cashier: [
     "viewOwnReports",
     "viewInventory",
     "sell",
     "printReceipts",
+    "viewCustomers",
+    "createCustomers",
   ],
   viewer: [
     "viewReports",

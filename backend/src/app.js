@@ -11,6 +11,7 @@ import notificationRoutes from "../routes/notifications.js";
 import adminRoutes from "../routes/admin.js";
 import settingsRoutes from "../routes/settings.js";
 import auditRoutes from "../routes/audit.js";
+import customerRoutes from "../routes/customers.js";
 
 export const createApp = () => {
   const app = express();
@@ -36,6 +37,7 @@ export const createApp = () => {
   app.use("/api/admin", adminRoutes);
   app.use("/api/settings", settingsRoutes);
   app.use("/api/audit", auditRoutes);
+  app.use("/api/customers", customerRoutes);
 
   app.use((err, req, res, next) => {
     console.error(err.stack);
