@@ -2,6 +2,7 @@
   "name": "stockos-store-management",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "engines": {
     "node": ">=24"
   },
@@ -9,7 +10,15 @@
     "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend",
     "backend": "npm run dev --prefix backend",
     "frontend": "npm run dev --prefix frontend",
-    "dev": "concurrently \"npm run backend\" \"npm run frontend\""
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
+    "build:backend": "npm run build --prefix backend",
+    "build:frontend": "npm run build --prefix frontend",
+    "build": "npm run build:backend && npm run build:frontend",
+    "start": "npm run start --prefix backend",
+    "start:prod": "npm run build && npm run start",
+    "backup": "node scripts/backup.js",
+    "restore": "node scripts/restore.js",
+    "verify": "npm run lint --prefix frontend && npm run build"
   },
   "dependencies": {
     "concurrently": "^8.2.2"

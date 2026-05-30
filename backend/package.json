@@ -8,6 +8,8 @@
     "node": ">=24"
   },
   "scripts": {
+    "build": "node scripts/check.js",
+    "check": "node scripts/check.js",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
