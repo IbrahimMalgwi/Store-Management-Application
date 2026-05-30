@@ -8,6 +8,7 @@ import { LineChart } from "./components/charts/LineChart";
 import { HorizontalRankingChart } from "./components/charts/HorizontalRankingChart";
 import { NotificationPanel } from "./components/notifications/NotificationPanel";
 import { Modal } from "./components/ui/Modal";
+import { useToast } from "./hooks/useToast";
 
 const DEFAULT_BUSINESS_PROFILE = {
   businessName: "StockOS",
@@ -499,13 +500,17 @@ function LoginPage() {
   const [email, setEmail] = useState("admin@store.com");
   const [password, setPassword] = useState("admin123");
   const [error, setError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
 
   const handleLogin = async () => {
+    setLoggingIn(true);
     try {
       setError("");
       await login(email, password);
     } catch (err) {
       setError(err.message || "Invalid credentials.");
+    } finally {
+      setLoggingIn(false);
     }
   };
 
@@ -544,8 +549,8 @@ function LoginPage() {
           <label>Password</label>
           <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter password" onKeyDown={e => e.key === "Enter" && handleLogin()} />
         </div>
-        <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center", padding: "11px" }} onClick={handleLogin}>
-          Sign In →
+        <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center", padding: "11px" }} onClick={handleLogin} disabled={loggingIn}>
+          {loggingIn ? "Signing In..." : "Sign In →"}
         </button>
         <p style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)", marginTop: 16, textAlign: "center" }}>
           Owner: admin@store.com / admin123 &nbsp;|&nbsp; Cashier: jane@store.com / user123
@@ -875,6 +880,7 @@ function AdminDashboard({ currentUser, items, users, txns }) {
 
 // ─── ADMIN: Inventory ────────────────────────────────────────────────────────
 function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete, onAdjust, onBulkImport, readOnly = false }) {
+  const { showToast } = useToast();
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState(null); // null | "add" | "edit"
   const [importModal, setImportModal] = useState(false);
@@ -884,6 +890,7 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
   const [importPreview, setImportPreview] = useState([]);
   const [form, setForm] = useState({ sku: "", name: "", qty: "", reorderThreshold: 5, amount: "", purchaseCost: "", category: "General", supplier: "", description: "" });
   const [editId, setEditId] = useState(null);
+  const [busyAction, setBusyAction] = useState("");
 
   const filtered = items.filter(i =>
     i.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -897,6 +904,7 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
   
   const save = async () => {
     if (!form.sku || !form.name || form.qty === "" || form.reorderThreshold === "" || form.amount === "" || form.purchaseCost === "") return;
+    setBusyAction("save");
     try {
       if (modal === "add") {
         await onAdd(form);
@@ -904,8 +912,11 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
         await onEdit(editId, form);
       }
       setModal(null);
+      showToast("Inventory item saved.");
     } catch (err) {
-      alert(err.message || "Error saving inventory item");
+      showToast(err.message || "Error saving inventory item", "error");
+    } finally {
+      setBusyAction("");
     }
   };
 
@@ -913,8 +924,9 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
     if (confirm("Delete this item?")) {
       try {
         await onDelete(id);
+        showToast("Inventory item deleted.");
       } catch (err) {
-        alert(err.message || "Error deleting item");
+        showToast(err.message || "Error deleting item", "error");
       }
     }
   };
@@ -926,11 +938,15 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
 
   const submitAdjustment = async () => {
     if (!adjustItem || !adjustForm.quantity) return;
+    setBusyAction("adjust");
     try {
       await onAdjust(adjustItem.id, adjustForm);
       setAdjustItem(null);
+      showToast("Stock adjustment saved.");
     } catch (err) {
-      alert(err.message || "Error adjusting stock");
+      showToast(err.message || "Error adjusting stock", "error");
+    } finally {
+      setBusyAction("");
     }
   };
 
@@ -948,25 +964,31 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
       return;
     }
 
+    setBusyAction("preview");
     try {
       const rows = await readStockFile(file);
       setImportPreview(rows);
     } catch (err) {
       setImportPreview([]);
-      alert(err.message || "Unable to read stock file");
+      showToast(err.message || "Unable to read stock file", "error");
+    } finally {
+      setBusyAction("");
     }
   };
 
   const submitImport = async () => {
     if (importPreview.length === 0) return;
+    setBusyAction("import");
     try {
       const result = await onBulkImport(importPreview);
-      alert(`Import completed. Created: ${result.created}. Updated: ${result.updated}.`);
+      showToast(`Import completed. Created: ${result.created}. Updated: ${result.updated}.`);
       setImportFile(null);
       setImportPreview([]);
       setImportModal(false);
     } catch (err) {
-      alert(err.message || "Error importing stock");
+      showToast(err.message || "Error importing stock", "error");
+    } finally {
+      setBusyAction("");
     }
   };
 
@@ -1021,7 +1043,7 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
 
       {modal && (
         <Modal title={modal === "add" ? "Add Item" : "Edit Item"} onClose={() => setModal(null)}
-          footer={<><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Item</button></>}>
+          footer={<><button className="btn btn-secondary" onClick={() => setModal(null)} disabled={busyAction === "save"}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={busyAction === "save"}>{busyAction === "save" ? "Saving..." : "Save Item"}</button></>}>
           <div className="form-row">{renderField({ label: "SKU", field: "sku", placeholder: "SKU-001" })}{renderField({ label: "Name", field: "name", placeholder: "Item name" })}</div>
           <div className="form-row">{renderField({ label: "Category", field: "category", placeholder: "Accessories" })}{renderField({ label: "Supplier", field: "supplier", placeholder: "Supplier name" })}</div>
           <div className="form-row">{renderField({ label: "Quantity", field: "qty", type: "number", placeholder: "0" })}{renderField({ label: "Reorder Threshold", field: "reorderThreshold", type: "number", placeholder: "5" })}</div>
@@ -1033,7 +1055,7 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
 
       {adjustItem && (
         <Modal title={`Adjust Stock: ${adjustItem.name}`} onClose={() => setAdjustItem(null)}
-          footer={<><button className="btn btn-secondary" onClick={() => setAdjustItem(null)}>Cancel</button><button className="btn btn-primary" onClick={submitAdjustment}>Save Adjustment</button></>}>
+          footer={<><button className="btn btn-secondary" onClick={() => setAdjustItem(null)} disabled={busyAction === "adjust"}>Cancel</button><button className="btn btn-primary" onClick={submitAdjustment} disabled={busyAction === "adjust"}>{busyAction === "adjust" ? "Saving..." : "Save Adjustment"}</button></>}>
           <div className="stock-adjust-summary">
             <div><span>Current Stock</span><strong>{adjustItem.qty}</strong></div>
             <div><span>SKU</span><strong>{adjustItem.sku}</strong></div>
@@ -1085,7 +1107,7 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
 
       {importModal && (
         <Modal title="Import Bulk Stock" onClose={() => setImportModal(false)}
-          footer={<><button className="btn btn-secondary" onClick={() => setImportModal(false)}>Cancel</button><button className="btn btn-primary" onClick={submitImport} disabled={importPreview.length === 0}>Import Stock</button></>}>
+          footer={<><button className="btn btn-secondary" onClick={() => setImportModal(false)} disabled={busyAction === "import"}>Cancel</button><button className="btn btn-primary" onClick={submitImport} disabled={importPreview.length === 0 || busyAction === "import"}>{busyAction === "import" ? "Importing..." : "Import Stock"}</button></>}>
           <div className="form-group">
             <label>Excel or CSV File</label>
             <input type="file" accept=".xlsx,.csv" onChange={e => previewImport(e.target.files?.[0])} />
@@ -1095,7 +1117,7 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
           </p>
           {importFile && (
             <div className="table-card" style={{ boxShadow: "none", marginBottom: 0 }}>
-              <div className="table-header"><h3>{importPreview.length} row(s) ready</h3></div>
+              <div className="table-header"><h3>{busyAction === "preview" ? "Reading file..." : `${importPreview.length} row(s) ready`}</h3></div>
               <table>
                 <thead><tr><th>SKU</th><th>Name</th><th>Qty</th><th>Reorder At</th><th>Cost</th><th>Price</th></tr></thead>
                 <tbody>
@@ -1121,11 +1143,13 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
 
 // ─── ADMIN: Users ─────────────────────────────────────────────────────────────
 function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onResetPassword }) {
+  const { showToast } = useToast();
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "cashier", active: true });
   const [passwordForm, setPasswordForm] = useState({ password: "", confirmPassword: "" });
   const [resetUser, setResetUser] = useState(null);
   const [editId, setEditId] = useState(null);
+  const [busyAction, setBusyAction] = useState("");
 
   const openAdd = () => { setForm({ name: "", email: "", password: "", role: "cashier", active: true }); setModal("add"); };
   const openEdit = (u) => { setForm({ name: u.name, email: u.email, password: u.password, role: u.role, active: u.active }); setEditId(u.id); setModal("edit"); };
@@ -1136,6 +1160,7 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
   
   const save = async () => {
     if (!form.name || !form.email || (!form.password && modal === "add") || !form.role) return;
+    setBusyAction("save");
     try {
       if (modal === "add") {
         await onAdd(form);
@@ -1143,8 +1168,11 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
         await onEdit(editId, form);
       }
       setModal(null);
+      showToast("User saved.");
     } catch (err) {
-      alert(err.message || "Error saving user");
+      showToast(err.message || "Error saving user", "error");
+    } finally {
+      setBusyAction("");
     }
   };
 
@@ -1152,8 +1180,9 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
     if (confirm("Delete this user?")) {
       try {
         await onDelete(id);
+        showToast("User deleted.");
       } catch (err) {
-        alert(err.message || "Error deleting user");
+        showToast(err.message || "Error deleting user", "error");
       }
     }
   };
@@ -1161,23 +1190,27 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
   const toggle = async (u) => {
     try {
       await onToggle(u.id, u);
+      showToast(`User ${u.active ? "deactivated" : "activated"}.`);
     } catch (err) {
-      alert(err.message || "Error updating user status");
+      showToast(err.message || "Error updating user status", "error");
     }
   };
 
   const resetPassword = async () => {
     if (!passwordForm.password || !passwordForm.confirmPassword) {
-      alert("Password and confirmation are required.");
+      showToast("Password and confirmation are required.", "error");
       return;
     }
 
+    setBusyAction("reset");
     try {
       await onResetPassword(resetUser.id, passwordForm);
       setResetUser(null);
-      alert("Password reset successfully.");
+      showToast("Password reset successfully.");
     } catch (err) {
-      alert(err.message || "Error resetting password");
+      showToast(err.message || "Error resetting password", "error");
+    } finally {
+      setBusyAction("");
     }
   };
 
@@ -1218,7 +1251,7 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
 
       {modal && (
         <Modal title={modal === "add" ? "Add User" : "Edit User"} onClose={() => setModal(null)}
-          footer={<><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save User</button></>}>
+          footer={<><button className="btn btn-secondary" onClick={() => setModal(null)} disabled={busyAction === "save"}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={busyAction === "save"}>{busyAction === "save" ? "Saving..." : "Save User"}</button></>}>
           <div className="form-group"><label>Full Name</label><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Full name" /></div>
           <div className="form-group"><label>Email</label><input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="email@store.com" /></div>
           <div className="form-row">
@@ -1246,7 +1279,7 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
 
       {resetUser && (
         <Modal title={`Reset Password: ${resetUser.name}`} onClose={() => setResetUser(null)}
-          footer={<><button className="btn btn-secondary" onClick={() => setResetUser(null)}>Cancel</button><button className="btn btn-primary" onClick={resetPassword}>Reset Password</button></>}>
+          footer={<><button className="btn btn-secondary" onClick={() => setResetUser(null)} disabled={busyAction === "reset"}>Cancel</button><button className="btn btn-primary" onClick={resetPassword} disabled={busyAction === "reset"}>{busyAction === "reset" ? "Resetting..." : "Reset Password"}</button></>}>
           <div className="form-group">
             <label>New Password</label>
             <input type="password" value={passwordForm.password} onChange={e => setPasswordForm(f => ({ ...f, password: e.target.value }))} placeholder="At least 8 characters" />
@@ -1263,11 +1296,13 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
 
 // ─── CUSTOMERS ────────────────────────────────────────────────────────────────
 function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
+  const { showToast } = useToast();
   const emptyForm = { name: "", phone: "", email: "", address: "" };
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [editId, setEditId] = useState(null);
+  const [saving, setSaving] = useState(false);
   const query = search.toLowerCase();
   const filtered = customers.filter(customer =>
     customer.name.toLowerCase().includes(query)
@@ -1290,6 +1325,7 @@ function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
 
   const save = async () => {
     if (!form.name.trim() || !form.address.trim() || (!form.phone.trim() && !form.email.trim())) return;
+    setSaving(true);
     try {
       if (modal === "edit") {
         await onEdit(editId, form);
@@ -1297,8 +1333,11 @@ function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
         await onAdd(form);
       }
       setModal(null);
+      showToast("Customer saved.");
     } catch (err) {
-      alert(err.message || "Error saving customer");
+      showToast(err.message || "Error saving customer", "error");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1306,8 +1345,9 @@ function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
     if (!confirm("Delete this customer record? Past receipts will keep their customer snapshot.")) return;
     try {
       await onDelete(id);
+      showToast("Customer deleted.");
     } catch (err) {
-      alert(err.message || "Error deleting customer");
+      showToast(err.message || "Error deleting customer", "error");
     }
   };
 
@@ -1349,7 +1389,7 @@ function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
 
       {modal && (
         <Modal title={modal === "edit" ? "Edit Customer" : "Add Customer"} onClose={() => setModal(null)}
-          footer={<><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Customer</button></>}>
+          footer={<><button className="btn btn-secondary" onClick={() => setModal(null)} disabled={saving}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "Saving..." : "Save Customer"}</button></>}>
           <div className="form-group"><label>Customer Name</label><input value={form.name} onChange={event => setForm(current => ({ ...current, name: event.target.value }))} placeholder="Full name or business name" /></div>
           <div className="form-row">
             <div className="form-group"><label>Phone Number</label><input value={form.phone} onChange={event => setForm(current => ({ ...current, phone: event.target.value }))} placeholder="Phone number" /></div>
@@ -1364,9 +1404,11 @@ function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
 
 // ─── ADMIN: Transactions ──────────────────────────────────────────────────────
 function AdminTransactions({ txns, onPrintReceipt, onRefund, canPrint = false, canRefund = false }) {
+  const { showToast } = useToast();
   const [search, setSearch] = useState("");
   const [refundReceipt, setRefundReceipt] = useState(null);
   const [refundForm, setRefundForm] = useState({ reason: "", items: {} });
+  const [refunding, setRefunding] = useState(false);
   const receipts = buildReceipts(txns);
   const query = search.toLowerCase();
   const filtered = receipts.filter(receipt =>
@@ -1391,11 +1433,15 @@ function AdminTransactions({ txns, onPrintReceipt, onRefund, canPrint = false, c
       .map(([transactionId, item]) => ({ transactionId, qty: Number(item.qty), restock: item.restock }));
     if (!refundForm.reason.trim() || items.length === 0) return;
 
+    setRefunding(true);
     try {
       await onRefund(refundReceipt.id, { reason: refundForm.reason, items });
       setRefundReceipt(null);
+      showToast("Refund processed.");
     } catch (err) {
-      alert(err.message || "Error processing refund");
+      showToast(err.message || "Error processing refund", "error");
+    } finally {
+      setRefunding(false);
     }
   };
 
@@ -1445,7 +1491,7 @@ function AdminTransactions({ txns, onPrintReceipt, onRefund, canPrint = false, c
 
       {refundReceipt && (
         <Modal title={`Refund Receipt: ${refundReceipt.receiptNo}`} onClose={() => setRefundReceipt(null)}
-          footer={<><button className="btn btn-secondary" onClick={() => setRefundReceipt(null)}>Cancel</button><button className="btn btn-danger" onClick={submitRefund}>Process Refund</button></>}>
+          footer={<><button className="btn btn-secondary" onClick={() => setRefundReceipt(null)} disabled={refunding}>Cancel</button><button className="btn btn-danger" onClick={submitRefund} disabled={refunding}>{refunding ? "Processing..." : "Process Refund"}</button></>}>
           <div className="form-group">
             <label>Reason</label>
             <textarea value={refundForm.reason} onChange={event => setRefundForm(current => ({ ...current, reason: event.target.value }))} placeholder="Return reason, payment reversal, damaged item..." />
@@ -1474,9 +1520,22 @@ function AdminTransactions({ txns, onPrintReceipt, onRefund, canPrint = false, c
 
 // ─── ADMIN: Data Tools ───────────────────────────────────────────────────────
 function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canManageData = false }) {
+  const { showToast } = useToast();
   const [period, setPeriod] = useState("daily");
   const [startDate, setStartDate] = useState(getStartDateForPeriod("daily"));
   const [endDate, setEndDate] = useState(todayString());
+  const [busyAction, setBusyAction] = useState("");
+
+  const runAction = async (action, handler) => {
+    setBusyAction(action);
+    try {
+      await handler();
+    } catch (err) {
+      showToast(err.message || "Unable to update store data", "error");
+    } finally {
+      setBusyAction("");
+    }
+  };
 
   const syncPeriod = (nextPeriod) => {
     setPeriod(nextPeriod);
@@ -1571,21 +1630,21 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canMa
               <div style={{ fontWeight: 700, fontSize: 13 }}>Delete sales history</div>
               <div style={{ color: "var(--text3)", fontSize: 12 }}>Clears transactions, receipts, notifications, and resets sold counts.</div>
             </div>
-            <button className="btn btn-danger" onClick={onClearHistory}>Delete History</button>
+            <button className="btn btn-danger" disabled={Boolean(busyAction)} onClick={() => runAction("history", onClearHistory)}>{busyAction === "history" ? "Deleting..." : "Delete History"}</button>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
             <div>
               <div style={{ fontWeight: 700, fontSize: 13 }}>Start fresh</div>
               <div style={{ color: "var(--text3)", fontSize: 12 }}>Clears inventory, users, history, and notifications. Keeps only the current admin account.</div>
             </div>
-            <button className="btn btn-danger" onClick={onResetFresh}>Start Fresh</button>
+            <button className="btn btn-danger" disabled={Boolean(busyAction)} onClick={() => runAction("fresh", onResetFresh)}>{busyAction === "fresh" ? "Resetting..." : "Start Fresh"}</button>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
             <div>
               <div style={{ fontWeight: 700, fontSize: 13 }}>Restore demo data</div>
               <div style={{ color: "var(--text3)", fontSize: 12 }}>Resets everything back to the original sample inventory, users, and generated sales.</div>
             </div>
-            <button className="btn btn-secondary" onClick={onResetDemo}>Restore Demo</button>
+            <button className="btn btn-secondary" disabled={Boolean(busyAction)} onClick={() => runAction("demo", onResetDemo)}>{busyAction === "demo" ? "Restoring..." : "Restore Demo"}</button>
           </div>
         </div>
       </div>}
@@ -1648,6 +1707,7 @@ function AdminAuditLogs({ logs }) {
 
 // ─── SETTINGS ────────────────────────────────────────────────────────────────
 function BusinessSettings({ businessProfile, license, receiptSettings, user, onSaveProfile, onSaveLicense, onSaveReceiptSettings }) {
+  const { showToast } = useToast();
   const [form, setForm] = useState(businessProfile || DEFAULT_BUSINESS_PROFILE);
   const [licenseForm, setLicenseForm] = useState(license || DEFAULT_LICENSE);
   const [receiptForm, setReceiptForm] = useState(receiptSettings || DEFAULT_RECEIPT_SETTINGS);
@@ -1669,16 +1729,16 @@ function BusinessSettings({ businessProfile, license, receiptSettings, user, onS
 
   const save = async () => {
     if (!form.businessName || !form.address || !form.phone || !form.email) {
-      alert("Business name, address, phone, and email are required.");
+      showToast("Business name, address, phone, and email are required.", "error");
       return;
     }
 
     setSaving(true);
     try {
       await onSaveProfile(form);
-      alert("Business settings saved.");
+      showToast("Business settings saved.");
     } catch (err) {
-      alert(err.message || "Unable to save business settings");
+      showToast(err.message || "Unable to save business settings", "error");
     } finally {
       setSaving(false);
     }
@@ -1686,16 +1746,16 @@ function BusinessSettings({ businessProfile, license, receiptSettings, user, onS
 
   const saveLicense = async () => {
     if (licenseForm.mode === "saas" && !licenseForm.expiresAt) {
-      alert("SaaS licenses require an expiry date.");
+      showToast("SaaS licenses require an expiry date.", "error");
       return;
     }
 
     setSavingLicense(true);
     try {
       await onSaveLicense({ ...licenseForm, seats: Number(licenseForm.seats) });
-      alert("License settings saved.");
+      showToast("License settings saved.");
     } catch (err) {
-      alert(err.message || "Unable to save license settings");
+      showToast(err.message || "Unable to save license settings", "error");
     } finally {
       setSavingLicense(false);
     }
@@ -1703,7 +1763,7 @@ function BusinessSettings({ businessProfile, license, receiptSettings, user, onS
 
   const saveReceiptSettings = async () => {
     if (!receiptForm.prefix) {
-      alert("Receipt prefix is required.");
+      showToast("Receipt prefix is required.", "error");
       return;
     }
 
@@ -1714,9 +1774,9 @@ function BusinessSettings({ businessProfile, license, receiptSettings, user, onS
         nextNumber: Number(receiptForm.nextNumber),
         minDigits: Number(receiptForm.minDigits),
       });
-      alert("Receipt numbering settings saved.");
+      showToast("Receipt numbering settings saved.");
     } catch (err) {
-      alert(err.message || "Unable to save receipt numbering settings");
+      showToast(err.message || "Unable to save receipt numbering settings", "error");
     } finally {
       setSavingReceipt(false);
     }
@@ -1881,6 +1941,7 @@ function BusinessSettings({ businessProfile, license, receiptSettings, user, onS
 
 // ─── ACCOUNT SECURITY ────────────────────────────────────────────────────────
 function AccountSecurity({ user, onChangePassword }) {
+  const { showToast } = useToast();
   const [form, setForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
   const [saving, setSaving] = useState(false);
 
@@ -1890,7 +1951,7 @@ function AccountSecurity({ user, onChangePassword }) {
 
   const save = async () => {
     if (!form.currentPassword || !form.newPassword || !form.confirmPassword) {
-      alert("Current password, new password, and confirmation are required.");
+      showToast("Current password, new password, and confirmation are required.", "error");
       return;
     }
 
@@ -1898,9 +1959,9 @@ function AccountSecurity({ user, onChangePassword }) {
     try {
       await onChangePassword(form);
       setForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
-      alert("Password changed successfully.");
+      showToast("Password changed successfully.");
     } catch (err) {
-      alert(err.message || "Unable to change password");
+      showToast(err.message || "Unable to change password", "error");
     } finally {
       setSaving(false);
     }
@@ -2127,6 +2188,7 @@ function UserReceipts({ txns, onPrintReceipt }) {
 
 // ─── USER: Make a Sale ────────────────────────────────────────────────────────
 function UserSell({ items, customers, onSell, onPrintReceipt }) {
+  const { showToast } = useToast();
   const [cart, setCart] = useState({});
   const [search, setSearch] = useState("");
   const [customerId, setCustomerId] = useState("");
@@ -2134,6 +2196,7 @@ function UserSell({ items, customers, onSell, onPrintReceipt }) {
   const [confirm, setConfirm] = useState(false);
   const [done, setDone] = useState(false);
   const [lastReceipt, setLastReceipt] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const query = search.trim().toLowerCase();
   const available = items.filter(i =>
@@ -2162,9 +2225,10 @@ function UserSell({ items, customers, onSell, onPrintReceipt }) {
   const submit = async () => {
     if (cartItems.length === 0) return;
     if (!customerComplete) {
-      alert("Customer name, address, and a phone number or email address are required for the receipt.");
+      showToast("Customer name, address, and a phone number or email address are required for the receipt.", "error");
       return;
     }
+    setSubmitting(true);
     try {
       const result = await onSell(cartItems.map(ci => ({ id: ci.id, qty: ci.qty })), customerId, customer);
       setLastReceipt(result.receipt);
@@ -2173,9 +2237,12 @@ function UserSell({ items, customers, onSell, onPrintReceipt }) {
       setCustomer({ name: "", address: "", phone: "", email: "" });
       setConfirm(false);
       setDone(true);
+      showToast("Sale completed successfully.");
       setTimeout(() => setDone(false), 3000);
     } catch (err) {
-      alert(err.message || "Error completing sale");
+      showToast(err.message || "Error completing sale", "error");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -2187,7 +2254,7 @@ function UserSell({ items, customers, onSell, onPrintReceipt }) {
         <div style={{ background: "rgba(0,229,160,0.1)", border: "1px solid rgba(0,229,160,0.3)", borderRadius: 10, padding: "12px 16px", marginBottom: 16, color: "var(--accent)", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
           <span>{I.check} Sale completed successfully!</span>
           {lastReceipt && (
-            <button className="btn btn-sm btn-primary" style={{ marginLeft: "auto" }} disabled={lastReceipt.receiptPrinted} onClick={() => onPrintReceipt(lastReceipt, "both").then(() => setLastReceipt(r => r ? { ...r, receiptPrinted: true } : r)).catch(() => {})}>
+            <button className="btn btn-sm btn-primary" style={{ marginLeft: "auto" }} disabled={lastReceipt.receiptPrinted} onClick={() => onPrintReceipt(lastReceipt, "both").then(printed => printed && setLastReceipt(r => r ? { ...r, receiptPrinted: true } : r))}>
               {lastReceipt.receiptPrinted ? "Receipt Printed" : "Print Customer + Record Copies"}
             </button>
           )}
@@ -2261,7 +2328,7 @@ function UserSell({ items, customers, onSell, onPrintReceipt }) {
 
       {confirm && (
         <Modal title="Confirm Sale" onClose={() => setConfirm(false)}
-          footer={<><button className="btn btn-secondary" onClick={() => setConfirm(false)}>Cancel</button><button className="btn btn-primary" onClick={submit} disabled={!customerComplete}>Complete Sale</button></>}>
+          footer={<><button className="btn btn-secondary" onClick={() => setConfirm(false)} disabled={submitting}>Cancel</button><button className="btn btn-primary" onClick={submit} disabled={!customerComplete || submitting}>{submitting ? "Completing..." : "Complete Sale"}</button></>}>
           <div className="form-group">
             <label>Customer Record</label>
             <select value={customerId} onChange={event => selectCustomer(event.target.value)}>
@@ -2337,6 +2404,7 @@ function UserStore({ items }) {
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
   const { user, logout, updateUser, loading } = useAuth();
+  const { showToast } = useToast();
   const [items, setItems] = useState([]);
   const [users, setUsers] = useState([]);
   const [txns, setTxns] = useState([]);
@@ -2349,11 +2417,13 @@ export default function App() {
   const [page, setPage] = useState("dashboard");
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [dataLoading, setDataLoading] = useState(Boolean(user));
 
   const unreadCount = notifications.filter(n => n.unread).length;
 
   const fetchData = useCallback(async () => {
     if (!user) return;
+    setDataLoading(true);
     try {
       const itemsData = await api.get("/inventory");
       setItems(itemsData);
@@ -2394,8 +2464,11 @@ export default function App() {
       }
     } catch (error) {
       console.error("Error fetching data:", error);
+      showToast(error.message || "Unable to refresh store data", "error");
+    } finally {
+      setDataLoading(false);
     }
-  }, [user]);
+  }, [showToast, user]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -2458,7 +2531,7 @@ export default function App() {
     if (!confirm("Delete all sales history, receipts, notifications, and reset sold counts?")) return;
     await api.delete("/admin/history");
     await fetchData();
-    alert("Sales history deleted.");
+    showToast("Sales history deleted.");
   };
 
   const handleResetFresh = async () => {
@@ -2466,7 +2539,7 @@ export default function App() {
     await api.post("/admin/reset", { mode: "fresh" });
     await fetchData();
     setPage("dashboard");
-    alert("Data cleared. Your current admin account was kept.");
+    showToast("Data cleared. Your current admin account was kept.");
   };
 
   const handleResetDemo = async () => {
@@ -2474,7 +2547,7 @@ export default function App() {
     await api.post("/admin/reset", { mode: "seed" });
     await fetchData();
     setPage("dashboard");
-    alert("Demo data restored.");
+    showToast("Demo data restored.");
   };
 
   // Transaction API Operations
@@ -2539,8 +2612,8 @@ export default function App() {
   const handlePrintReceipt = async (receipt, copyType = "both") => {
     const printWindow = window.open("", "_blank", "width=900,height=700");
     if (!printWindow) {
-      alert("The receipt print window was blocked by the browser.");
-      return;
+      showToast("The receipt print window was blocked by the browser.", "error");
+      return false;
     }
 
     try {
@@ -2557,10 +2630,12 @@ export default function App() {
         printWindow
       );
       await fetchData();
+      showToast("Receipt sent to the print window.");
+      return true;
     } catch (err) {
       printWindow.close();
-      alert(err.message || "Unable to print receipt");
-      throw err;
+      showToast(err.message || "Unable to print receipt", "error");
+      return false;
     }
   };
 
@@ -2620,6 +2695,7 @@ export default function App() {
 
   return (
     <div className="app">
+      {dataLoading && <div className="app-loading-bar" />}
       <aside className="sidebar">
         <div className="sidebar-logo brand-lockup">
           <div className="brand-mark" aria-hidden="true"><span>SO</span></div>
