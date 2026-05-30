@@ -12,6 +12,7 @@ export function NotificationPanel({ notifications, onClose, onMarkAll }) {
       </div>
       {notifications.length === 0 ? <div className="empty">No notifications</div> : notifications.map((notification) => (
         <div key={notification.id} className={`notif-item ${notification.unread ? "unread" : ""}`}>
+          {notification.type === "low_stock" && <span className={`badge-pill ${notification.resolved ? "gray" : "red"}`}>{notification.resolved ? "Restocked" : "Low stock"}</span>}
           <p>{notification.message}</p>
           <span>{notification.time}</span>
         </div>

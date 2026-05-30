@@ -4,6 +4,7 @@ import { authenticateToken, hasPermission, requirePermission } from "../middlewa
 import { recordAuditLog } from "../src/audit.js";
 import { reserveReceiptNumber } from "../src/receiptNumbering.js";
 import { recordStockAdjustment } from "../src/stockAdjustments.js";
+import { syncLowStockAlert } from "../src/lowStockAlerts.js";
 
 const router = express.Router();
 
@@ -130,6 +131,7 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
   saveCollection("txns", db.txns);
   saveCollection("instances", db.instances);
   stockDeductions.forEach(({ item, previousQty, newQty, referenceId }) => {
+    syncLowStockAlert({ db, item, previousQty });
     recordStockAdjustment({
       db,
       req,

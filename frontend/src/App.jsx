@@ -74,6 +74,10 @@ const hasPermission = (user, permission) => ROLE_PERMISSIONS[user?.role]?.includ
 
 const getTxnCost = (txn) => Number(txn.costAmount ?? (Number(txn.unitCost || 0) * Number(txn.qty || 0)));
 const getTxnProfit = (txn) => Number(txn.profit ?? (Number(txn.amount || 0) - getTxnCost(txn)));
+const getItemThreshold = (item) => {
+  const threshold = Number.parseInt(item?.reorderThreshold, 10);
+  return Number.isFinite(threshold) && threshold >= 0 ? threshold : 5;
+};
 
 const formatReceiptPreview = (settings = DEFAULT_RECEIPT_SETTINGS) => {
   const prefix = String(settings.prefix || DEFAULT_RECEIPT_SETTINGS.prefix).toUpperCase();
@@ -258,6 +262,7 @@ const mapStockRows = (rows) => {
   const qtyIndex = getIndex("qty", "quantity", "stock", "stockqty");
   const amountIndex = getIndex("amount", "price", "unitprice", "sellingprice", "saleprice");
   const purchaseCostIndex = getIndex("purchasecost", "cost", "unitcost", "buyingprice");
+  const reorderThresholdIndex = getIndex("reorderthreshold", "threshold", "reorderlevel", "minimumstock");
   const categoryIndex = getIndex("category", "productcategory");
   const supplierIndex = getIndex("supplier", "vendor");
   const descriptionIndex = getIndex("description", "desc", "details");
@@ -268,6 +273,7 @@ const mapStockRows = (rows) => {
     qty: row[qtyIndex] ?? "",
     amount: row[amountIndex] ?? "",
     purchaseCost: purchaseCostIndex >= 0 ? row[purchaseCostIndex] ?? "" : "",
+    reorderThreshold: reorderThresholdIndex >= 0 ? row[reorderThresholdIndex] ?? 5 : 5,
     category: categoryIndex >= 0 ? row[categoryIndex] ?? "" : "",
     supplier: supplierIndex >= 0 ? row[supplierIndex] ?? "" : "",
     description: descriptionIndex >= 0 ? row[descriptionIndex] ?? "" : "",
@@ -426,7 +432,7 @@ function AdminDashboard({ items, users, txns }) {
   const totalRevenue = filtered.reduce((s, t) => s + t.amount, 0);
   const totalProfit = filtered.reduce((s, t) => s + getTxnProfit(t), 0);
   const totalSold = filtered.reduce((s, t) => s + t.qty, 0);
-  const lowStock = items.filter(i => i.qty <= 5).length;
+  const lowStock = items.filter(i => i.qty <= getItemThreshold(i)).length;
   const activeUsers = users.length ? users.filter(u => u.active).length : "—";
 
   const itemRevenue = {};
@@ -642,7 +648,8 @@ function AdminDashboard({ items, users, txns }) {
           <tbody>
             {items.map(item => {
               const pct = Math.min(100, (item.qty / 50) * 100);
-              const color = item.qty <= 5 ? "var(--danger)" : item.qty <= 15 ? "var(--warn)" : "var(--accent)";
+              const threshold = getItemThreshold(item);
+              const color = item.qty <= threshold ? "var(--danger)" : item.qty <= threshold * 2 ? "var(--warn)" : "var(--accent)";
               return (
                 <tr key={item.id}>
                   <td><span className="badge-pill gray">{item.sku}</span></td>
@@ -672,7 +679,7 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
   const [adjustForm, setAdjustForm] = useState({ mode: "increase", quantity: "", reason: "" });
   const [importFile, setImportFile] = useState(null);
   const [importPreview, setImportPreview] = useState([]);
-  const [form, setForm] = useState({ sku: "", name: "", qty: "", amount: "", purchaseCost: "", category: "General", supplier: "", description: "" });
+  const [form, setForm] = useState({ sku: "", name: "", qty: "", reorderThreshold: 5, amount: "", purchaseCost: "", category: "General", supplier: "", description: "" });
   const [editId, setEditId] = useState(null);
 
   const filtered = items.filter(i =>
@@ -682,11 +689,11 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
     String(i.supplier || "").toLowerCase().includes(search.toLowerCase())
   );
 
-  const openAdd = () => { setForm({ sku: `SKU-00${items.length + 1}`, name: "", qty: "", amount: "", purchaseCost: "", category: "General", supplier: "", description: "" }); setModal("add"); };
-  const openEdit = (item) => { setForm({ sku: item.sku, name: item.name, qty: item.qty, amount: item.amount, purchaseCost: item.purchaseCost || 0, category: item.category || "General", supplier: item.supplier || "", description: item.description }); setEditId(item.id); setModal("edit"); };
+  const openAdd = () => { setForm({ sku: `SKU-00${items.length + 1}`, name: "", qty: "", reorderThreshold: 5, amount: "", purchaseCost: "", category: "General", supplier: "", description: "" }); setModal("add"); };
+  const openEdit = (item) => { setForm({ sku: item.sku, name: item.name, qty: item.qty, reorderThreshold: getItemThreshold(item), amount: item.amount, purchaseCost: item.purchaseCost || 0, category: item.category || "General", supplier: item.supplier || "", description: item.description }); setEditId(item.id); setModal("edit"); };
   
   const save = async () => {
-    if (!form.sku || !form.name || form.qty === "" || form.amount === "" || form.purchaseCost === "") return;
+    if (!form.sku || !form.name || form.qty === "" || form.reorderThreshold === "" || form.amount === "" || form.purchaseCost === "") return;
     try {
       if (modal === "add") {
         await onAdd(form);
@@ -776,18 +783,22 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
 
       <div className="table-card">
         <table>
-          <thead><tr><th>SKU</th><th>Name</th><th>Category</th><th>Supplier</th><th>Qty</th><th>Cost</th><th>Price</th><th>Margin</th><th>Sold</th>{!readOnly && <th>Actions</th>}</tr></thead>
+          <thead><tr><th>SKU</th><th>Name</th><th>Category</th><th>Supplier</th><th>Qty</th><th>Reorder At</th><th>Status</th><th>Cost</th><th>Price</th><th>Margin</th><th>Sold</th>{!readOnly && <th>Actions</th>}</tr></thead>
           <tbody>
-            {filtered.length === 0 ? <tr><td colSpan={readOnly ? 9 : 10}><div className="empty">No items found</div></td></tr> :
-              filtered.map(item => (
-                <tr key={item.id}>
+            {filtered.length === 0 ? <tr><td colSpan={readOnly ? 11 : 12}><div className="empty">No items found</div></td></tr> :
+              filtered.map(item => {
+                const threshold = getItemThreshold(item);
+                const isLow = item.qty <= threshold;
+                return <tr key={item.id}>
                   <td><span className="badge-pill gray">{item.sku}</span></td>
                   <td style={{ color: "var(--text)", fontWeight: 600 }}>{item.name}</td>
                   <td><span className="badge-pill purple">{item.category || "General"}</span></td>
                   <td>{item.supplier || "Unassigned"}</td>
                   <td>
-                    <span className={`badge-pill ${item.qty <= 5 ? "red" : item.qty <= 15 ? "orange" : "green"}`}>{item.qty}</span>
+                    <span className={`badge-pill ${isLow ? "red" : item.qty <= threshold * 2 ? "orange" : "green"}`}>{item.qty}</span>
                   </td>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{threshold}</td>
+                  <td><span className={`badge-pill ${isLow ? "red" : "green"}`}>{isLow ? "Reorder" : "Stocked"}</span></td>
                   <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(item.purchaseCost || 0)}</td>
                   <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)" }}>{fmt(item.amount)}</td>
                   <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent2)" }}>{fmt((item.amount || 0) - (item.purchaseCost || 0))}</td>
@@ -799,8 +810,8 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
                       <button className="btn btn-sm btn-danger" onClick={() => del(item.id)}>{I.del}</button>
                     </div>
                   </td>}
-                </tr>
-              ))}
+                </tr>;
+              })}
           </tbody>
         </table>
       </div>
@@ -810,8 +821,9 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
           footer={<><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Item</button></>}>
           <div className="form-row">{renderField({ label: "SKU", field: "sku", placeholder: "SKU-001" })}{renderField({ label: "Name", field: "name", placeholder: "Item name" })}</div>
           <div className="form-row">{renderField({ label: "Category", field: "category", placeholder: "Accessories" })}{renderField({ label: "Supplier", field: "supplier", placeholder: "Supplier name" })}</div>
-          <div className="form-row">{renderField({ label: "Quantity", field: "qty", type: "number", placeholder: "0" })}{renderField({ label: "Purchase Cost (₦)", field: "purchaseCost", type: "number", placeholder: "0.00" })}</div>
-          <div className="form-row">{renderField({ label: "Selling Price (₦)", field: "amount", type: "number", placeholder: "0.00" })}<div className="form-group"><label>Unit Profit</label><input value={fmt((Number(form.amount) || 0) - (Number(form.purchaseCost) || 0))} readOnly /></div></div>
+          <div className="form-row">{renderField({ label: "Quantity", field: "qty", type: "number", placeholder: "0" })}{renderField({ label: "Reorder Threshold", field: "reorderThreshold", type: "number", placeholder: "5" })}</div>
+          <div className="form-row">{renderField({ label: "Purchase Cost (₦)", field: "purchaseCost", type: "number", placeholder: "0.00" })}{renderField({ label: "Selling Price (₦)", field: "amount", type: "number", placeholder: "0.00" })}</div>
+          <div className="form-group"><label>Unit Profit</label><input value={fmt((Number(form.amount) || 0) - (Number(form.purchaseCost) || 0))} readOnly /></div>
           {renderField({ label: "Description", field: "description", placeholder: "Item description" })}
         </Modal>
       )}
@@ -876,19 +888,20 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
             <input type="file" accept=".xlsx,.csv" onChange={e => previewImport(e.target.files?.[0])} />
           </div>
           <p style={{ fontSize: 12, color: "var(--text3)", marginBottom: 14 }}>
-            Required columns: SKU, Name, Qty, Price, Purchase Cost. Optional: Category, Supplier, Description. Existing SKUs add imported quantity to current stock.
+            Required columns: SKU, Name, Qty, Price, Purchase Cost. Optional: Reorder Threshold, Category, Supplier, Description. Existing SKUs add imported quantity to current stock.
           </p>
           {importFile && (
             <div className="table-card" style={{ boxShadow: "none", marginBottom: 0 }}>
               <div className="table-header"><h3>{importPreview.length} row(s) ready</h3></div>
               <table>
-                <thead><tr><th>SKU</th><th>Name</th><th>Qty</th><th>Cost</th><th>Price</th></tr></thead>
+                <thead><tr><th>SKU</th><th>Name</th><th>Qty</th><th>Reorder At</th><th>Cost</th><th>Price</th></tr></thead>
                 <tbody>
                   {importPreview.slice(0, 5).map((item, index) => (
                     <tr key={`${item.sku}-${index}`}>
                       <td><span className="badge-pill gray">{item.sku}</span></td>
                       <td>{item.name}</td>
                       <td>{item.qty}</td>
+                      <td>{item.reorderThreshold}</td>
                       <td>{item.purchaseCost}</td>
                       <td>{item.amount}</td>
                     </tr>
@@ -1648,7 +1661,8 @@ function UserDashboard({ currentUser, items, txns }) {
           <p>Current inventory levels</p>
           {items.slice(0, 5).map(item => {
             const pct = Math.min(100, (item.qty / 50) * 100);
-            const color = item.qty <= 5 ? "var(--danger)" : item.qty <= 15 ? "var(--warn)" : "var(--accent)";
+            const threshold = getItemThreshold(item);
+            const color = item.qty <= threshold ? "var(--danger)" : item.qty <= threshold * 2 ? "var(--warn)" : "var(--accent)";
             return (
               <div key={item.id} style={{ marginBottom: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 4 }}>
@@ -1909,7 +1923,7 @@ function UserStore({ items }) {
                 <td style={{ color: "var(--text)", fontWeight: 600 }}>{item.name}</td>
                 <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)" }}>{fmt(item.amount)}</td>
                 <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{item.qty}</td>
-                <td><span className={`badge-pill ${item.qty === 0 ? "red" : item.qty <= 5 ? "orange" : "green"}`}>{item.qty === 0 ? "Out of stock" : item.qty <= 5 ? "Low stock" : "In stock"}</span></td>
+                <td><span className={`badge-pill ${item.qty === 0 ? "red" : item.qty <= getItemThreshold(item) ? "orange" : "green"}`}>{item.qty === 0 ? "Out of stock" : item.qty <= getItemThreshold(item) ? "Low stock" : "In stock"}</span></td>
               </tr>
             ))}
           </tbody>

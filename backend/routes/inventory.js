@@ -3,6 +3,7 @@ import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, requirePermission } from "../middleware/auth.js";
 import { recordAuditLog } from "../src/audit.js";
 import { recordStockAdjustment } from "../src/stockAdjustments.js";
+import { getReorderThreshold, resolveLowStockAlert, syncLowStockAlert } from "../src/lowStockAlerts.js";
 
 const router = express.Router();
 
@@ -10,12 +11,15 @@ const cleanItemInput = (body = {}) => ({
   sku: String(body.sku || "").trim(),
   name: String(body.name || "").trim(),
   qty: Number(body.qty),
+  reorderThreshold: Number(body.reorderThreshold ?? 5),
   amount: Number(body.amount),
   purchaseCost: Number(body.purchaseCost || 0),
   category: String(body.category || "General").trim(),
   supplier: String(body.supplier || "").trim(),
   description: String(body.description || "").trim(),
 });
+
+const isValidThreshold = threshold => Number.isInteger(threshold) && threshold >= 0;
 
 // GET all items (Admins see all, Users see all)
 router.get("/", authenticateToken, (req, res) => {
@@ -34,12 +38,19 @@ router.get("/adjustments", authenticateToken, requirePermission("manageInventory
   res.json(adjustments);
 });
 
+router.get("/low-stock", authenticateToken, requirePermission("manageInventory"), (req, res) => {
+  const db = getDB();
+  res.json(db.items
+    .filter(item => item.instanceId === req.user.instanceId && item.qty <= getReorderThreshold(item))
+    .map(item => ({ ...item, reorderThreshold: getReorderThreshold(item) })));
+});
+
 // POST add new item (Admin only)
 router.post("/", authenticateToken, requirePermission("manageInventory"), (req, res) => {
-  const { sku, name, qty, amount, purchaseCost, category, supplier, description } = cleanItemInput(req.body);
+  const { sku, name, qty, reorderThreshold, amount, purchaseCost, category, supplier, description } = cleanItemInput(req.body);
 
-  if (!sku || !name || !Number.isFinite(qty) || qty < 0 || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(purchaseCost) || purchaseCost < 0) {
-    return res.status(400).json({ message: "SKU, name, non-negative quantity, selling price, and purchase cost are required" });
+  if (!sku || !name || !Number.isFinite(qty) || qty < 0 || !isValidThreshold(reorderThreshold) || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(purchaseCost) || purchaseCost < 0) {
+    return res.status(400).json({ message: "SKU, name, non-negative quantity, reorder threshold, selling price, and purchase cost are required" });
   }
 
   const db = getDB();
@@ -56,6 +67,7 @@ router.post("/", authenticateToken, requirePermission("manageInventory"), (req, 
     sku,
     name,
     qty: Number(qty),
+    reorderThreshold,
     amount: Number(amount),
     purchaseCost,
     category,
@@ -66,6 +78,7 @@ router.post("/", authenticateToken, requirePermission("manageInventory"), (req, 
 
   db.items.push(newItem);
   saveCollection("items", db.items);
+  syncLowStockAlert({ db, item: newItem, previousQty: 0 });
   recordStockAdjustment({
     db,
     req,
@@ -106,10 +119,10 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
 
   items.forEach((raw, index) => {
     const rowNumber = index + 2;
-    const { sku, name, qty, amount, purchaseCost, category, supplier, description } = cleanItemInput(raw);
+    const { sku, name, qty, reorderThreshold, amount, purchaseCost, category, supplier, description } = cleanItemInput(raw);
 
-    if (!sku || !name || !Number.isFinite(qty) || qty < 0 || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(purchaseCost) || purchaseCost < 0) {
-      errors.push(`Row ${rowNumber}: SKU, name, non-negative qty, selling price, and purchase cost are required`);
+    if (!sku || !name || !Number.isFinite(qty) || qty < 0 || !isValidThreshold(reorderThreshold) || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(purchaseCost) || purchaseCost < 0) {
+      errors.push(`Row ${rowNumber}: SKU, name, non-negative qty, reorder threshold, selling price, and purchase cost are required`);
       return;
     }
 
@@ -119,6 +132,7 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
       const previousQty = existing.qty;
       existing.name = name;
       existing.qty += qty;
+      existing.reorderThreshold = reorderThreshold;
       existing.amount = amount;
       existing.purchaseCost = purchaseCost;
       existing.category = category;
@@ -144,6 +158,7 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
       sku,
       name,
       qty,
+      reorderThreshold,
       amount,
       purchaseCost,
       category,
@@ -173,6 +188,7 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
   db.items = workingItems;
   saveCollection("items", db.items);
   pendingAdjustments.forEach(recordStockAdjustment);
+  pendingAdjustments.forEach(({ item, previousQty }) => syncLowStockAlert({ db, item, previousQty }));
   recordAuditLog({
     req,
     action: "inventory.bulk_import",
@@ -186,10 +202,10 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
 // PUT update item (Admin only)
 router.put("/:id", authenticateToken, requirePermission("manageInventory"), (req, res) => {
   const itemId = Number(req.params.id);
-  const { sku, name, qty, amount, purchaseCost, category, supplier, description } = cleanItemInput(req.body);
+  const { sku, name, qty, reorderThreshold, amount, purchaseCost, category, supplier, description } = cleanItemInput(req.body);
 
-  if (!sku || !name || !Number.isFinite(qty) || qty < 0 || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(purchaseCost) || purchaseCost < 0) {
-    return res.status(400).json({ message: "SKU, name, non-negative quantity, selling price, and purchase cost are required" });
+  if (!sku || !name || !Number.isFinite(qty) || qty < 0 || !isValidThreshold(reorderThreshold) || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(purchaseCost) || purchaseCost < 0) {
+    return res.status(400).json({ message: "SKU, name, non-negative quantity, reorder threshold, selling price, and purchase cost are required" });
   }
 
   const db = getDB();
@@ -211,6 +227,7 @@ router.put("/:id", authenticateToken, requirePermission("manageInventory"), (req
     sku,
     name,
     qty: Number(qty),
+    reorderThreshold,
     amount: Number(amount),
     purchaseCost,
     category,
@@ -220,6 +237,7 @@ router.put("/:id", authenticateToken, requirePermission("manageInventory"), (req
 
   db.items[index] = updatedItem;
   saveCollection("items", db.items);
+  syncLowStockAlert({ db, item: updatedItem, previousQty: previousItem.qty });
   recordStockAdjustment({
     db,
     req,
@@ -278,6 +296,7 @@ router.post("/:id/adjust", authenticateToken, requirePermission("manageInventory
   const updatedItem = { ...previousItem, qty: nextQty };
   db.items[index] = updatedItem;
   saveCollection("items", db.items);
+  syncLowStockAlert({ db, item: updatedItem, previousQty });
   recordStockAdjustment({
     db,
     req,
@@ -313,6 +332,7 @@ router.delete("/:id", authenticateToken, requirePermission("manageInventory"), (
 
   const [deletedItem] = db.items.splice(index, 1);
   saveCollection("items", db.items);
+  resolveLowStockAlert({ db, item: deletedItem });
   recordStockAdjustment({
     db,
     req,

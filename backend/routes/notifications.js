@@ -1,6 +1,7 @@
 import express from "express";
 import { getDB, saveCollection } from "../db.js";
 import { authenticateToken, requirePermission } from "../middleware/auth.js";
+import { syncInstanceLowStockAlerts } from "../src/lowStockAlerts.js";
 
 const router = express.Router();
 
@@ -10,6 +11,7 @@ router.use(authenticateToken);
 // GET notifications
 router.get("/", (req, res) => {
   const db = getDB();
+  syncInstanceLowStockAlerts({ db, instanceId: req.user.instanceId });
   res.json(db.notifications.filter(notification => notification.instanceId === req.user.instanceId));
 });
 
