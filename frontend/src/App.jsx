@@ -72,6 +72,9 @@ const ROLE_PERMISSIONS = {
 
 const hasPermission = (user, permission) => ROLE_PERMISSIONS[user?.role]?.includes(permission) || false;
 
+const getTxnCost = (txn) => Number(txn.costAmount ?? (Number(txn.unitCost || 0) * Number(txn.qty || 0)));
+const getTxnProfit = (txn) => Number(txn.profit ?? (Number(txn.amount || 0) - getTxnCost(txn)));
+
 const formatReceiptPreview = (settings = DEFAULT_RECEIPT_SETTINGS) => {
   const prefix = String(settings.prefix || DEFAULT_RECEIPT_SETTINGS.prefix).toUpperCase();
   const separator = settings.separator ?? DEFAULT_RECEIPT_SETTINGS.separator;
@@ -253,7 +256,10 @@ const mapStockRows = (rows) => {
   const skuIndex = getIndex("sku", "itemsku");
   const nameIndex = getIndex("name", "item", "itemname", "product");
   const qtyIndex = getIndex("qty", "quantity", "stock", "stockqty");
-  const amountIndex = getIndex("amount", "price", "unitprice", "cost");
+  const amountIndex = getIndex("amount", "price", "unitprice", "sellingprice", "saleprice");
+  const purchaseCostIndex = getIndex("purchasecost", "cost", "unitcost", "buyingprice");
+  const categoryIndex = getIndex("category", "productcategory");
+  const supplierIndex = getIndex("supplier", "vendor");
   const descriptionIndex = getIndex("description", "desc", "details");
 
   return rows.slice(1).map(row => ({
@@ -261,8 +267,11 @@ const mapStockRows = (rows) => {
     name: row[nameIndex] ?? "",
     qty: row[qtyIndex] ?? "",
     amount: row[amountIndex] ?? "",
+    purchaseCost: purchaseCostIndex >= 0 ? row[purchaseCostIndex] ?? "" : "",
+    category: categoryIndex >= 0 ? row[categoryIndex] ?? "" : "",
+    supplier: supplierIndex >= 0 ? row[supplierIndex] ?? "" : "",
     description: descriptionIndex >= 0 ? row[descriptionIndex] ?? "" : "",
-  })).filter(item => item.sku || item.name || item.qty || item.amount);
+  })).filter(item => item.sku || item.name || item.qty || item.amount || item.purchaseCost);
 };
 
 const readStockFile = async (file) => {
@@ -415,27 +424,48 @@ function AdminDashboard({ items, users, txns }) {
   const rangeLabel = getRangeLabel(period, startDate, endDate);
   const filtered = txns.filter(t => inDateRange(t, startDate, endDate));
   const totalRevenue = filtered.reduce((s, t) => s + t.amount, 0);
+  const totalProfit = filtered.reduce((s, t) => s + getTxnProfit(t), 0);
   const totalSold = filtered.reduce((s, t) => s + t.qty, 0);
   const lowStock = items.filter(i => i.qty <= 5).length;
   const activeUsers = users.length ? users.filter(u => u.active).length : "—";
 
   const itemRevenue = {};
   filtered.forEach(t => {
-    itemRevenue[t.itemId] = itemRevenue[t.itemId] || { name: t.itemName, sku: t.sku, qty: 0, revenue: 0 };
+    itemRevenue[t.itemId] = itemRevenue[t.itemId] || { name: t.itemName, sku: t.sku, category: t.category || "General", supplier: t.supplier || "", qty: 0, revenue: 0, profit: 0 };
     itemRevenue[t.itemId].qty += t.qty;
     itemRevenue[t.itemId].revenue += t.amount;
+    itemRevenue[t.itemId].profit += getTxnProfit(t);
   });
   const itemRevenueRows = Object.values(itemRevenue).sort((a, b) => b.revenue - a.revenue);
   const best = itemRevenueRows.slice(0, 5);
 
   const userTxns = {};
   filtered.forEach(t => {
-    userTxns[t.userId] = userTxns[t.userId] || { count: 0, qty: 0, amount: 0, name: t.userName };
+    userTxns[t.userId] = userTxns[t.userId] || { count: 0, qty: 0, amount: 0, profit: 0, name: t.userName };
     userTxns[t.userId].count++;
     userTxns[t.userId].qty += t.qty;
     userTxns[t.userId].amount += t.amount;
+    userTxns[t.userId].profit += getTxnProfit(t);
   });
   const userRevenueRows = Object.values(userTxns).sort((a, b) => b.amount - a.amount);
+
+  const categoryRows = Object.values(filtered.reduce((acc, txn) => {
+    const key = txn.category || "General";
+    acc[key] = acc[key] || { name: key, revenue: 0, profit: 0, qty: 0 };
+    acc[key].revenue += txn.amount;
+    acc[key].profit += getTxnProfit(txn);
+    acc[key].qty += txn.qty;
+    return acc;
+  }, {})).sort((a, b) => b.profit - a.profit);
+
+  const supplierRows = Object.values(filtered.reduce((acc, txn) => {
+    const key = txn.supplier || "Unassigned";
+    acc[key] = acc[key] || { name: key, revenue: 0, profit: 0, qty: 0 };
+    acc[key].revenue += txn.amount;
+    acc[key].profit += getTxnProfit(txn);
+    acc[key].qty += txn.qty;
+    return acc;
+  }, {})).sort((a, b) => b.profit - a.profit);
 
   const now = new Date();
   const getDays = (n) => Array.from({ length: n }, (_, i) => { const d = new Date(now); d.setDate(d.getDate() - (n - 1 - i)); return d.toISOString().split("T")[0]; });
@@ -464,14 +494,20 @@ function AdminDashboard({ items, users, txns }) {
           <div className="stat-icon">{I.money}</div>
         </div>
         <div className="stat-card blue">
+          <div className="stat-label">Profit</div>
+          <div className="stat-value" style={{ color: "var(--accent2)" }}>{fmt(totalProfit)}</div>
+          <div className="stat-sub">{totalRevenue > 0 ? `${Math.round((totalProfit / totalRevenue) * 100)}% margin` : rangeLabel}</div>
+          <div className="stat-icon">{I.chart}</div>
+        </div>
+        <div className="stat-card orange">
           <div className="stat-label">Units Sold</div>
-          <div className="stat-value" style={{ color: "var(--accent2)" }}>{fmtNum(totalSold)}</div>
+          <div className="stat-value" style={{ color: "var(--accent3)" }}>{fmtNum(totalSold)}</div>
           <div className="stat-sub">{filtered.length} transactions</div>
           <div className="stat-icon">{I.pkg}</div>
         </div>
-        <div className="stat-card orange">
+        <div className="stat-card purple">
           <div className="stat-label">Active Users</div>
-          <div className="stat-value" style={{ color: "var(--accent3)" }}>{activeUsers}</div>
+          <div className="stat-value" style={{ color: "var(--accent4)" }}>{activeUsers}</div>
           <div className="stat-sub">{users.length ? `${users.length} total users` : "owner-only detail"}</div>
           <div className="stat-icon">{I.users}</div>
         </div>
@@ -481,9 +517,9 @@ function AdminDashboard({ items, users, txns }) {
           <div className="stat-sub">items need restock</div>
           <div className="stat-icon">{I.warn}</div>
         </div>
-        <div className="stat-card purple">
+        <div className="stat-card blue">
           <div className="stat-label">Total SKUs</div>
-          <div className="stat-value" style={{ color: "var(--accent4)" }}>{items.length}</div>
+          <div className="stat-value" style={{ color: "var(--accent2)" }}>{items.length}</div>
           <div className="stat-sub">{items.reduce((s, i) => s + i.qty, 0)} units in stock</div>
           <div className="stat-icon">{I.items}</div>
         </div>
@@ -506,15 +542,16 @@ function AdminDashboard({ items, users, txns }) {
         <div className="table-card">
           <div className="table-header"><h3>Top Items by Revenue</h3></div>
           <table>
-            <thead><tr><th>Item</th><th>SKU</th><th>Qty</th><th>Revenue</th></tr></thead>
+            <thead><tr><th>Item</th><th>SKU</th><th>Qty</th><th>Revenue</th><th>Profit</th></tr></thead>
             <tbody>
-              {best.length === 0 ? <tr><td colSpan={4}><div className="empty">No data</div></td></tr> :
+              {best.length === 0 ? <tr><td colSpan={5}><div className="empty">No data</div></td></tr> :
                 best.map((b, i) => (
                   <tr key={i}>
                     <td style={{ color: "var(--text)" }}>{b.name}</td>
                     <td><span className="badge-pill gray">{b.sku}</span></td>
                     <td><span className="badge-pill green">{b.qty}</span></td>
                     <td style={{ color: "var(--accent)", fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(b.revenue)}</td>
+                    <td style={{ color: "var(--accent2)", fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(b.profit)}</td>
                   </tr>
                 ))}
             </tbody>
@@ -524,15 +561,16 @@ function AdminDashboard({ items, users, txns }) {
         <div className="table-card">
           <div className="table-header"><h3>Revenue by User</h3></div>
           <table>
-            <thead><tr><th>User</th><th>Transactions</th><th>Qty</th><th>Revenue</th></tr></thead>
+            <thead><tr><th>User</th><th>Transactions</th><th>Qty</th><th>Revenue</th><th>Profit</th></tr></thead>
             <tbody>
-              {userRevenueRows.length === 0 ? <tr><td colSpan={4}><div className="empty">No data</div></td></tr> :
+              {userRevenueRows.length === 0 ? <tr><td colSpan={5}><div className="empty">No data</div></td></tr> :
                 userRevenueRows.map((u, i) => (
                   <tr key={i}>
                     <td style={{ color: "var(--text)" }}>{u.name}</td>
                     <td><span className="badge-pill blue">{u.count}</span></td>
                     <td><span className="badge-pill green">{u.qty}</span></td>
                     <td style={{ color: "var(--accent)", fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(u.amount)}</td>
+                    <td style={{ color: "var(--accent2)", fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(u.profit)}</td>
                   </tr>
                 ))}
             </tbody>
@@ -541,21 +579,60 @@ function AdminDashboard({ items, users, txns }) {
       </div>
 
       <div className="table-card" style={{ marginTop: 14 }}>
-        <div className="table-header"><h3>All Item Revenue</h3></div>
+        <div className="table-header"><h3>All Item Profit</h3></div>
         <table>
-          <thead><tr><th>Item</th><th>SKU</th><th>Units Sold</th><th>Revenue</th></tr></thead>
+          <thead><tr><th>Item</th><th>Category</th><th>Supplier</th><th>Units Sold</th><th>Revenue</th><th>Profit</th></tr></thead>
           <tbody>
-            {itemRevenueRows.length === 0 ? <tr><td colSpan={4}><div className="empty">No item revenue in this range</div></td></tr> :
+            {itemRevenueRows.length === 0 ? <tr><td colSpan={6}><div className="empty">No item revenue in this range</div></td></tr> :
               itemRevenueRows.map((item, index) => (
                 <tr key={`${item.sku}-${index}`}>
                   <td style={{ color: "var(--text)" }}>{item.name}</td>
-                  <td><span className="badge-pill gray">{item.sku}</span></td>
+                  <td><span className="badge-pill purple">{item.category}</span></td>
+                  <td>{item.supplier || "Unassigned"}</td>
                   <td><span className="badge-pill blue">{item.qty}</span></td>
                   <td style={{ color: "var(--accent)", fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(item.revenue)}</td>
+                  <td style={{ color: "var(--accent2)", fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(item.profit)}</td>
                 </tr>
               ))}
           </tbody>
         </table>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
+        <div className="table-card">
+          <div className="table-header"><h3>Profit by Category</h3></div>
+          <table>
+            <thead><tr><th>Category</th><th>Qty</th><th>Revenue</th><th>Profit</th></tr></thead>
+            <tbody>
+              {categoryRows.length === 0 ? <tr><td colSpan={4}><div className="empty">No data</div></td></tr> :
+                categoryRows.map(row => (
+                  <tr key={row.name}>
+                    <td><span className="badge-pill purple">{row.name}</span></td>
+                    <td>{row.qty}</td>
+                    <td style={{ color: "var(--accent)", fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(row.revenue)}</td>
+                    <td style={{ color: "var(--accent2)", fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(row.profit)}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="table-card">
+          <div className="table-header"><h3>Profit by Supplier</h3></div>
+          <table>
+            <thead><tr><th>Supplier</th><th>Qty</th><th>Revenue</th><th>Profit</th></tr></thead>
+            <tbody>
+              {supplierRows.length === 0 ? <tr><td colSpan={4}><div className="empty">No data</div></td></tr> :
+                supplierRows.map(row => (
+                  <tr key={row.name}>
+                    <td>{row.name}</td>
+                    <td>{row.qty}</td>
+                    <td style={{ color: "var(--accent)", fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(row.revenue)}</td>
+                    <td style={{ color: "var(--accent2)", fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(row.profit)}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="table-card" style={{ marginTop: 14 }}>
@@ -593,16 +670,21 @@ function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport, readOnly
   const [importModal, setImportModal] = useState(false);
   const [importFile, setImportFile] = useState(null);
   const [importPreview, setImportPreview] = useState([]);
-  const [form, setForm] = useState({ sku: "", name: "", qty: "", amount: "", description: "" });
+  const [form, setForm] = useState({ sku: "", name: "", qty: "", amount: "", purchaseCost: "", category: "General", supplier: "", description: "" });
   const [editId, setEditId] = useState(null);
 
-  const filtered = items.filter(i => i.name.toLowerCase().includes(search.toLowerCase()) || i.sku.toLowerCase().includes(search.toLowerCase()));
+  const filtered = items.filter(i =>
+    i.name.toLowerCase().includes(search.toLowerCase()) ||
+    i.sku.toLowerCase().includes(search.toLowerCase()) ||
+    String(i.category || "").toLowerCase().includes(search.toLowerCase()) ||
+    String(i.supplier || "").toLowerCase().includes(search.toLowerCase())
+  );
 
-  const openAdd = () => { setForm({ sku: `SKU-00${items.length + 1}`, name: "", qty: "", amount: "", description: "" }); setModal("add"); };
-  const openEdit = (item) => { setForm({ sku: item.sku, name: item.name, qty: item.qty, amount: item.amount, description: item.description }); setEditId(item.id); setModal("edit"); };
+  const openAdd = () => { setForm({ sku: `SKU-00${items.length + 1}`, name: "", qty: "", amount: "", purchaseCost: "", category: "General", supplier: "", description: "" }); setModal("add"); };
+  const openEdit = (item) => { setForm({ sku: item.sku, name: item.name, qty: item.qty, amount: item.amount, purchaseCost: item.purchaseCost || 0, category: item.category || "General", supplier: item.supplier || "", description: item.description }); setEditId(item.id); setModal("edit"); };
   
   const save = async () => {
-    if (!form.sku || !form.name || form.qty === "" || form.amount === "") return;
+    if (!form.sku || !form.name || form.qty === "" || form.amount === "" || form.purchaseCost === "") return;
     try {
       if (modal === "add") {
         await onAdd(form);
@@ -677,19 +759,22 @@ function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport, readOnly
 
       <div className="table-card">
         <table>
-          <thead><tr><th>SKU</th><th>Name</th><th>Qty</th><th>Price</th><th>Sold</th><th>Description</th>{!readOnly && <th>Actions</th>}</tr></thead>
+          <thead><tr><th>SKU</th><th>Name</th><th>Category</th><th>Supplier</th><th>Qty</th><th>Cost</th><th>Price</th><th>Margin</th><th>Sold</th>{!readOnly && <th>Actions</th>}</tr></thead>
           <tbody>
-            {filtered.length === 0 ? <tr><td colSpan={readOnly ? 6 : 7}><div className="empty">No items found</div></td></tr> :
+            {filtered.length === 0 ? <tr><td colSpan={readOnly ? 9 : 10}><div className="empty">No items found</div></td></tr> :
               filtered.map(item => (
                 <tr key={item.id}>
                   <td><span className="badge-pill gray">{item.sku}</span></td>
                   <td style={{ color: "var(--text)", fontWeight: 600 }}>{item.name}</td>
+                  <td><span className="badge-pill purple">{item.category || "General"}</span></td>
+                  <td>{item.supplier || "Unassigned"}</td>
                   <td>
                     <span className={`badge-pill ${item.qty <= 5 ? "red" : item.qty <= 15 ? "orange" : "green"}`}>{item.qty}</span>
                   </td>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{fmt(item.purchaseCost || 0)}</td>
                   <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)" }}>{fmt(item.amount)}</td>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent2)" }}>{fmt((item.amount || 0) - (item.purchaseCost || 0))}</td>
                   <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{item.sold}</td>
-                  <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.description}</td>
                   {!readOnly && <td>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button className="btn btn-sm btn-secondary" onClick={() => openEdit(item)}>{I.edit}</button>
@@ -706,7 +791,9 @@ function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport, readOnly
         <Modal title={modal === "add" ? "Add Item" : "Edit Item"} onClose={() => setModal(null)}
           footer={<><button className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button><button className="btn btn-primary" onClick={save}>Save Item</button></>}>
           <div className="form-row">{renderField({ label: "SKU", field: "sku", placeholder: "SKU-001" })}{renderField({ label: "Name", field: "name", placeholder: "Item name" })}</div>
-          <div className="form-row">{renderField({ label: "Quantity", field: "qty", type: "number", placeholder: "0" })}{renderField({ label: "Price (₦)", field: "amount", type: "number", placeholder: "0.00" })}</div>
+          <div className="form-row">{renderField({ label: "Category", field: "category", placeholder: "Accessories" })}{renderField({ label: "Supplier", field: "supplier", placeholder: "Supplier name" })}</div>
+          <div className="form-row">{renderField({ label: "Quantity", field: "qty", type: "number", placeholder: "0" })}{renderField({ label: "Purchase Cost (₦)", field: "purchaseCost", type: "number", placeholder: "0.00" })}</div>
+          <div className="form-row">{renderField({ label: "Selling Price (₦)", field: "amount", type: "number", placeholder: "0.00" })}<div className="form-group"><label>Unit Profit</label><input value={fmt((Number(form.amount) || 0) - (Number(form.purchaseCost) || 0))} readOnly /></div></div>
           {renderField({ label: "Description", field: "description", placeholder: "Item description" })}
         </Modal>
       )}
@@ -719,19 +806,20 @@ function AdminInventory({ items, onAdd, onEdit, onDelete, onBulkImport, readOnly
             <input type="file" accept=".xlsx,.csv" onChange={e => previewImport(e.target.files?.[0])} />
           </div>
           <p style={{ fontSize: 12, color: "var(--text3)", marginBottom: 14 }}>
-            Required columns: SKU, Name, Qty, Price. Optional: Description. Supports Excel .xlsx and CSV files. Existing SKUs add the imported quantity to current stock.
+            Required columns: SKU, Name, Qty, Price, Purchase Cost. Optional: Category, Supplier, Description. Existing SKUs add imported quantity to current stock.
           </p>
           {importFile && (
             <div className="table-card" style={{ boxShadow: "none", marginBottom: 0 }}>
               <div className="table-header"><h3>{importPreview.length} row(s) ready</h3></div>
               <table>
-                <thead><tr><th>SKU</th><th>Name</th><th>Qty</th><th>Price</th></tr></thead>
+                <thead><tr><th>SKU</th><th>Name</th><th>Qty</th><th>Cost</th><th>Price</th></tr></thead>
                 <tbody>
                   {importPreview.slice(0, 5).map((item, index) => (
                     <tr key={`${item.sku}-${index}`}>
                       <td><span className="badge-pill gray">{item.sku}</span></td>
                       <td>{item.name}</td>
                       <td>{item.qty}</td>
+                      <td>{item.purchaseCost}</td>
                       <td>{item.amount}</td>
                     </tr>
                   ))}
@@ -966,7 +1054,7 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canMa
 
   const downloadHistory = () => {
     const rows = [
-      ["Receipt No", "Date", "Time", "Sold By", "Customer Name", "Customer Address", "Customer Contact", "SKU", "Item", "Qty", "Unit Price", "Amount", "User Printed"],
+      ["Receipt No", "Date", "Time", "Sold By", "Customer Name", "Customer Address", "Customer Contact", "SKU", "Item", "Category", "Supplier", "Qty", "Unit Cost", "Unit Price", "Cost", "Amount", "Profit", "User Printed"],
       ...filteredTxns.map(txn => [
         txn.receiptNo || getReceiptId(txn),
         txn.date,
@@ -977,9 +1065,14 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canMa
         txn.customer?.contact || "",
         txn.sku,
         txn.itemName,
+        txn.category || "General",
+        txn.supplier || "",
         txn.qty,
+        txn.unitCost || 0,
         txn.unitAmount ?? txn.amount / txn.qty,
+        getTxnCost(txn),
         txn.amount,
+        getTxnProfit(txn),
         txn.receiptPrinted ? "Yes" : "No",
       ]),
     ];

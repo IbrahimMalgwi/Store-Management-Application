@@ -3,12 +3,12 @@ import { DEFAULT_LICENSE } from "../license.js";
 import { DEFAULT_RECEIPT_SETTINGS } from "../receiptNumbering.js";
 
 export const SEED_ITEMS = [
-  { id: 1, sku: "SKU-001", name: "Wireless Headphones", qty: 45, amount: 89.99, description: "Premium noise-cancelling headphones", sold: 120 },
-  { id: 2, sku: "SKU-002", name: "USB-C Hub 7-in-1", qty: 12, amount: 34.99, description: "Multi-port USB hub for laptops", sold: 85 },
-  { id: 3, sku: "SKU-003", name: "Mechanical Keyboard", qty: 8, amount: 129.99, description: "RGB backlit 60% layout", sold: 60 },
-  { id: 4, sku: "SKU-004", name: "Webcam HD 1080p", qty: 22, amount: 59.99, description: "Full HD webcam with mic", sold: 44 },
-  { id: 5, sku: "SKU-005", name: "Mouse Pad XL", qty: 3, amount: 19.99, description: "Extended gaming mouse pad", sold: 200 },
-  { id: 6, sku: "SKU-006", name: "LED Desk Lamp", qty: 30, amount: 44.99, description: "Adjustable brightness, USB charging", sold: 75 },
+  { id: 1, sku: "SKU-001", name: "Wireless Headphones", qty: 45, amount: 89.99, purchaseCost: 52.5, category: "Audio", supplier: "SoundLine Wholesale", description: "Premium noise-cancelling headphones", sold: 120 },
+  { id: 2, sku: "SKU-002", name: "USB-C Hub 7-in-1", qty: 12, amount: 34.99, purchaseCost: 18.75, category: "Accessories", supplier: "PortPro Supplies", description: "Multi-port USB hub for laptops", sold: 85 },
+  { id: 3, sku: "SKU-003", name: "Mechanical Keyboard", qty: 8, amount: 129.99, purchaseCost: 74, category: "Computer Gear", supplier: "KeyWorks Distribution", description: "RGB backlit 60% layout", sold: 60 },
+  { id: 4, sku: "SKU-004", name: "Webcam HD 1080p", qty: 22, amount: 59.99, purchaseCost: 31.25, category: "Computer Gear", supplier: "VisionTech Supply", description: "Full HD webcam with mic", sold: 44 },
+  { id: 5, sku: "SKU-005", name: "Mouse Pad XL", qty: 3, amount: 19.99, purchaseCost: 7.5, category: "Accessories", supplier: "DeskMate Imports", description: "Extended gaming mouse pad", sold: 200 },
+  { id: 6, sku: "SKU-006", name: "LED Desk Lamp", qty: 30, amount: 44.99, purchaseCost: 21.4, category: "Office", supplier: "BrightDesk Ltd", description: "Adjustable brightness, USB charging", sold: 75 },
 ];
 
 export const SEED_NOTIFICATIONS = [
@@ -69,6 +69,12 @@ const createSeedTransactions = (users, items) => {
         sku: item.sku,
         qty,
         amount: item.amount * qty,
+        unitAmount: item.amount,
+        unitCost: item.purchaseCost,
+        costAmount: item.purchaseCost * qty,
+        profit: (item.amount - item.purchaseCost) * qty,
+        category: item.category,
+        supplier: item.supplier,
         userId: user.id,
         userName: user.name,
         date: date.toISOString().split("T")[0],

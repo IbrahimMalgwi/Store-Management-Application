@@ -5,6 +5,17 @@ import { recordAuditLog } from "../src/audit.js";
 
 const router = express.Router();
 
+const cleanItemInput = (body = {}) => ({
+  sku: String(body.sku || "").trim(),
+  name: String(body.name || "").trim(),
+  qty: Number(body.qty),
+  amount: Number(body.amount),
+  purchaseCost: Number(body.purchaseCost || 0),
+  category: String(body.category || "General").trim(),
+  supplier: String(body.supplier || "").trim(),
+  description: String(body.description || "").trim(),
+});
+
 // GET all items (Admins see all, Users see all)
 router.get("/", authenticateToken, (req, res) => {
   const db = getDB();
@@ -13,10 +24,10 @@ router.get("/", authenticateToken, (req, res) => {
 
 // POST add new item (Admin only)
 router.post("/", authenticateToken, requirePermission("manageInventory"), (req, res) => {
-  const { sku, name, qty, amount, description } = req.body;
+  const { sku, name, qty, amount, purchaseCost, category, supplier, description } = cleanItemInput(req.body);
 
-  if (!sku || !name || qty === undefined || amount === undefined) {
-    return res.status(400).json({ message: "SKU, Name, Quantity, and Price are required" });
+  if (!sku || !name || !Number.isFinite(qty) || qty < 0 || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(purchaseCost) || purchaseCost < 0) {
+    return res.status(400).json({ message: "SKU, name, non-negative quantity, selling price, and purchase cost are required" });
   }
 
   const db = getDB();
@@ -34,7 +45,10 @@ router.post("/", authenticateToken, requirePermission("manageInventory"), (req, 
     name,
     qty: Number(qty),
     amount: Number(amount),
-    description: description || "",
+    purchaseCost,
+    category,
+    supplier,
+    description,
     sold: 0
   };
 
@@ -46,7 +60,7 @@ router.post("/", authenticateToken, requirePermission("manageInventory"), (req, 
     entityType: "item",
     entityId: newItem.id,
     summary: `Created item ${newItem.sku} - ${newItem.name}`,
-    metadata: { sku: newItem.sku, name: newItem.name, qty: newItem.qty, amount: newItem.amount },
+    metadata: { sku: newItem.sku, name: newItem.name, qty: newItem.qty, amount: newItem.amount, purchaseCost: newItem.purchaseCost, category, supplier },
   });
 
   res.status(201).json(newItem);
@@ -67,14 +81,10 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
 
   items.forEach((raw, index) => {
     const rowNumber = index + 2;
-    const sku = String(raw.sku || "").trim();
-    const name = String(raw.name || "").trim();
-    const qty = Number(raw.qty);
-    const amount = Number(raw.amount);
-    const description = String(raw.description || "").trim();
+    const { sku, name, qty, amount, purchaseCost, category, supplier, description } = cleanItemInput(raw);
 
-    if (!sku || !name || !Number.isFinite(qty) || qty < 0 || !Number.isFinite(amount) || amount < 0) {
-      errors.push(`Row ${rowNumber}: SKU, name, non-negative qty, and non-negative price are required`);
+    if (!sku || !name || !Number.isFinite(qty) || qty < 0 || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(purchaseCost) || purchaseCost < 0) {
+      errors.push(`Row ${rowNumber}: SKU, name, non-negative qty, selling price, and purchase cost are required`);
       return;
     }
 
@@ -84,6 +94,9 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
       existing.name = name;
       existing.qty += qty;
       existing.amount = amount;
+      existing.purchaseCost = purchaseCost;
+      existing.category = category;
+      existing.supplier = supplier;
       existing.description = description;
       updated += 1;
       return;
@@ -96,6 +109,9 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
       name,
       qty,
       amount,
+      purchaseCost,
+      category,
+      supplier,
       description,
       sold: 0,
     });
@@ -120,10 +136,10 @@ router.post("/bulk", authenticateToken, requirePermission("manageInventory"), (r
 // PUT update item (Admin only)
 router.put("/:id", authenticateToken, requirePermission("manageInventory"), (req, res) => {
   const itemId = Number(req.params.id);
-  const { sku, name, qty, amount, description } = req.body;
+  const { sku, name, qty, amount, purchaseCost, category, supplier, description } = cleanItemInput(req.body);
 
-  if (!sku || !name || qty === undefined || amount === undefined) {
-    return res.status(400).json({ message: "SKU, Name, Quantity, and Price are required" });
+  if (!sku || !name || !Number.isFinite(qty) || qty < 0 || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(purchaseCost) || purchaseCost < 0) {
+    return res.status(400).json({ message: "SKU, name, non-negative quantity, selling price, and purchase cost are required" });
   }
 
   const db = getDB();
@@ -146,7 +162,10 @@ router.put("/:id", authenticateToken, requirePermission("manageInventory"), (req
     name,
     qty: Number(qty),
     amount: Number(amount),
-    description: description || ""
+    purchaseCost,
+    category,
+    supplier,
+    description
   };
 
   db.items[index] = updatedItem;

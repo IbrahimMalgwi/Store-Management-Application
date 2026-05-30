@@ -88,6 +88,11 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
         qty: cartItem.qty,
         amount: item.amount * cartItem.qty,
         unitAmount: item.amount,
+        unitCost: Number(item.purchaseCost || 0),
+        costAmount: Number(item.purchaseCost || 0) * cartItem.qty,
+        profit: (item.amount - Number(item.purchaseCost || 0)) * cartItem.qty,
+        category: item.category || "General",
+        supplier: item.supplier || "",
         customer: customerDetails,
         businessProfile,
         receiptPrinted: false,
@@ -126,6 +131,7 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
       customerName: customerDetails.name,
       itemCount: newTxns.length,
       total: newTxns.reduce((sum, txn) => sum + txn.amount, 0),
+      profit: newTxns.reduce((sum, txn) => sum + txn.profit, 0),
     },
   });
 
@@ -139,6 +145,7 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
       businessProfile,
       transactions: newTxns,
       total: newTxns.reduce((sum, txn) => sum + txn.amount, 0),
+      profit: newTxns.reduce((sum, txn) => sum + txn.profit, 0),
       date,
       time,
       userId: req.user.id,
