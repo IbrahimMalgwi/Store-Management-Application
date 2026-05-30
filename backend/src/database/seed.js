@@ -108,5 +108,6 @@ export const createSeedData = async () => {
     auditLogs: [],
     stockAdjustments: [],
     customers: [],
+    refunds: [],
   };
 };

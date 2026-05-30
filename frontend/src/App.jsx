@@ -64,16 +64,18 @@ const ROLE_LABELS = {
 };
 
 const ROLE_PERMISSIONS = {
-  owner: ["viewReports", "viewInventory", "manageInventory", "viewAllTransactions", "sell", "printReceipts", "reprintReceipts", "manageUsers", "manageSettings", "manageData", "viewCustomers", "createCustomers", "manageCustomers"],
-  manager: ["viewReports", "viewInventory", "manageInventory", "viewAllTransactions", "sell", "printReceipts", "reprintReceipts", "viewCustomers", "createCustomers", "manageCustomers"],
+  owner: ["viewReports", "viewInventory", "manageInventory", "viewAllTransactions", "sell", "printReceipts", "reprintReceipts", "manageUsers", "manageSettings", "manageData", "viewCustomers", "createCustomers", "manageCustomers", "manageRefunds"],
+  manager: ["viewReports", "viewInventory", "manageInventory", "viewAllTransactions", "sell", "printReceipts", "reprintReceipts", "viewCustomers", "createCustomers", "manageCustomers", "manageRefunds"],
   cashier: ["viewOwnReports", "viewInventory", "sell", "printReceipts", "viewCustomers", "createCustomers"],
   viewer: ["viewReports", "viewInventory", "viewAllTransactions"],
 };
 
 const hasPermission = (user, permission) => ROLE_PERMISSIONS[user?.role]?.includes(permission) || false;
 
-const getTxnCost = (txn) => Number(txn.costAmount ?? (Number(txn.unitCost || 0) * Number(txn.qty || 0)));
-const getTxnProfit = (txn) => Number(txn.profit ?? (Number(txn.amount || 0) - getTxnCost(txn)));
+const getTxnQty = (txn) => Number(txn.qty || 0) - Number(txn.refundedQty || 0);
+const getTxnRevenue = (txn) => Number(txn.amount || 0) - Number(txn.refundedAmount || 0);
+const getTxnCost = (txn) => Number(txn.costAmount ?? (Number(txn.unitCost || 0) * Number(txn.qty || 0))) - Number(txn.refundedCostAmount || 0);
+const getTxnProfit = (txn) => Number(txn.profit ?? Number(txn.amount || 0) - Number(txn.costAmount || 0)) - Number(txn.refundedProfit || 0);
 const getItemThreshold = (item) => {
   const threshold = Number.parseInt(item?.reorderThreshold, 10);
   return Number.isFinite(threshold) && threshold >= 0 ? threshold : 5;
@@ -112,7 +114,10 @@ const buildReceipts = (txns) => {
         items,
         itemCount: items.length,
         qty: items.reduce((sum, item) => sum + item.qty, 0),
+        refundedQty: items.reduce((sum, item) => sum + Number(item.refundedQty || 0), 0),
         total: items.reduce((sum, item) => sum + item.amount, 0),
+        refundedAmount: items.reduce((sum, item) => sum + Number(item.refundedAmount || 0), 0),
+        netTotal: items.reduce((sum, item) => sum + getTxnRevenue(item), 0),
         receiptPrinted: items.some(item => item.receiptPrinted),
         receiptPrintedAt: items.find(item => item.receiptPrintedAt)?.receiptPrintedAt || null,
       };
@@ -170,6 +175,16 @@ const renderReceiptCopy = (receipt, copyLabel) => `
       <span>Total</span>
       <strong>${escapeHtml(fmt(receipt.total))}</strong>
     </div>
+    ${receipt.refundedAmount ? `
+      <div class="receipt-total">
+        <span>Refunded</span>
+        <strong>-${escapeHtml(fmt(receipt.refundedAmount))}</strong>
+      </div>
+      <div class="receipt-total">
+        <span>Net Total</span>
+        <strong>${escapeHtml(fmt(receipt.netTotal))}</strong>
+      </div>
+    ` : ""}
     <footer>${escapeHtml(RECEIPT_FOOTER)}</footer>
   </section>
 `;
@@ -429,17 +444,17 @@ function AdminDashboard({ items, users, txns }) {
   const [endDate, setEndDate] = useState(todayString());
   const rangeLabel = getRangeLabel(period, startDate, endDate);
   const filtered = txns.filter(t => inDateRange(t, startDate, endDate));
-  const totalRevenue = filtered.reduce((s, t) => s + t.amount, 0);
+  const totalRevenue = filtered.reduce((s, t) => s + getTxnRevenue(t), 0);
   const totalProfit = filtered.reduce((s, t) => s + getTxnProfit(t), 0);
-  const totalSold = filtered.reduce((s, t) => s + t.qty, 0);
+  const totalSold = filtered.reduce((s, t) => s + getTxnQty(t), 0);
   const lowStock = items.filter(i => i.qty <= getItemThreshold(i)).length;
   const activeUsers = users.length ? users.filter(u => u.active).length : "—";
 
   const itemRevenue = {};
   filtered.forEach(t => {
     itemRevenue[t.itemId] = itemRevenue[t.itemId] || { name: t.itemName, sku: t.sku, category: t.category || "General", supplier: t.supplier || "", qty: 0, revenue: 0, profit: 0 };
-    itemRevenue[t.itemId].qty += t.qty;
-    itemRevenue[t.itemId].revenue += t.amount;
+    itemRevenue[t.itemId].qty += getTxnQty(t);
+    itemRevenue[t.itemId].revenue += getTxnRevenue(t);
     itemRevenue[t.itemId].profit += getTxnProfit(t);
   });
   const itemRevenueRows = Object.values(itemRevenue).sort((a, b) => b.revenue - a.revenue);
@@ -449,8 +464,8 @@ function AdminDashboard({ items, users, txns }) {
   filtered.forEach(t => {
     userTxns[t.userId] = userTxns[t.userId] || { count: 0, qty: 0, amount: 0, profit: 0, name: t.userName };
     userTxns[t.userId].count++;
-    userTxns[t.userId].qty += t.qty;
-    userTxns[t.userId].amount += t.amount;
+    userTxns[t.userId].qty += getTxnQty(t);
+    userTxns[t.userId].amount += getTxnRevenue(t);
     userTxns[t.userId].profit += getTxnProfit(t);
   });
   const userRevenueRows = Object.values(userTxns).sort((a, b) => b.amount - a.amount);
@@ -458,18 +473,18 @@ function AdminDashboard({ items, users, txns }) {
   const categoryRows = Object.values(filtered.reduce((acc, txn) => {
     const key = txn.category || "General";
     acc[key] = acc[key] || { name: key, revenue: 0, profit: 0, qty: 0 };
-    acc[key].revenue += txn.amount;
+    acc[key].revenue += getTxnRevenue(txn);
     acc[key].profit += getTxnProfit(txn);
-    acc[key].qty += txn.qty;
+    acc[key].qty += getTxnQty(txn);
     return acc;
   }, {})).sort((a, b) => b.profit - a.profit);
 
   const supplierRows = Object.values(filtered.reduce((acc, txn) => {
     const key = txn.supplier || "Unassigned";
     acc[key] = acc[key] || { name: key, revenue: 0, profit: 0, qty: 0 };
-    acc[key].revenue += txn.amount;
+    acc[key].revenue += getTxnRevenue(txn);
     acc[key].profit += getTxnProfit(txn);
-    acc[key].qty += txn.qty;
+    acc[key].qty += getTxnQty(txn);
     return acc;
   }, {})).sort((a, b) => b.profit - a.profit);
 
@@ -478,9 +493,9 @@ function AdminDashboard({ items, users, txns }) {
   const days7 = getDays(7);
   const barData = days7.map(day => ({
     l: new Date(day).toLocaleDateString("en", { weekday: "short" }).slice(0, 2),
-    v: txns.filter(t => t.date === day).reduce((s, t) => s + t.amount, 0),
+    v: txns.filter(t => t.date === day).reduce((s, t) => s + getTxnRevenue(t), 0),
   }));
-  const lineData = days7.map(day => txns.filter(t => t.date === day).reduce((s, t) => s + t.qty, 0));
+  const lineData = days7.map(day => txns.filter(t => t.date === day).reduce((s, t) => s + getTxnQty(t), 0));
 
   return (
     <>
@@ -1160,8 +1175,10 @@ function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
 }
 
 // ─── ADMIN: Transactions ──────────────────────────────────────────────────────
-function AdminTransactions({ txns, onPrintReceipt, canPrint = false }) {
+function AdminTransactions({ txns, onPrintReceipt, onRefund, canPrint = false, canRefund = false }) {
   const [search, setSearch] = useState("");
+  const [refundReceipt, setRefundReceipt] = useState(null);
+  const [refundForm, setRefundForm] = useState({ reason: "", items: {} });
   const receipts = buildReceipts(txns);
   const query = search.toLowerCase();
   const filtered = receipts.filter(receipt =>
@@ -1171,6 +1188,28 @@ function AdminTransactions({ txns, onPrintReceipt, canPrint = false }) {
     receipt.customer.contact.toLowerCase().includes(query) ||
     receipt.items.some(item => item.itemName.toLowerCase().includes(query) || item.sku.toLowerCase().includes(query))
   ).slice(0, 50);
+
+  const openRefund = (receipt) => {
+    setRefundReceipt(receipt);
+    setRefundForm({
+      reason: "",
+      items: Object.fromEntries(receipt.items.map(item => [item.id, { qty: 0, restock: true }])),
+    });
+  };
+
+  const submitRefund = async () => {
+    const items = Object.entries(refundForm.items)
+      .filter(([, item]) => Number(item.qty) > 0)
+      .map(([transactionId, item]) => ({ transactionId, qty: Number(item.qty), restock: item.restock }));
+    if (!refundForm.reason.trim() || items.length === 0) return;
+
+    try {
+      await onRefund(refundReceipt.id, { reason: refundForm.reason, items });
+      setRefundReceipt(null);
+    } catch (err) {
+      alert(err.message || "Error processing refund");
+    }
+  };
 
   return (
     <>
@@ -1183,7 +1222,7 @@ function AdminTransactions({ txns, onPrintReceipt, canPrint = false }) {
       </div>
       <div className="table-card">
         <table>
-          <thead><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Sold By</th><th>Items</th><th>Total</th><th>Status</th><th>Print</th></tr></thead>
+          <thead><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Sold By</th><th>Items</th><th>Net Total</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {filtered.length === 0 ? <tr><td colSpan={8}><div className="empty">No receipts</div></td></tr> :
               filtered.map(receipt => (
@@ -1196,23 +1235,51 @@ function AdminTransactions({ txns, onPrintReceipt, canPrint = false }) {
                     <div style={{ fontSize: 11, color: "var(--text3)", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{receipt.customer.address}</div>
                   </td>
                   <td>{receipt.userName}</td>
-                  <td><span className="badge-pill blue">{receipt.qty} units</span></td>
-                  <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)" }}>{fmt(receipt.total)}</td>
-                  <td><span className={`badge-pill ${receipt.receiptPrinted ? "green" : "orange"}`}>{receipt.receiptPrinted ? "User printed" : "Not printed"}</span></td>
+                  <td><span className="badge-pill blue">{receipt.qty - receipt.refundedQty} of {receipt.qty} units</span></td>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)" }}>{fmt(receipt.netTotal)}</td>
+                  <td><span className={`badge-pill ${receipt.refundedQty === receipt.qty ? "red" : receipt.refundedQty > 0 ? "orange" : receipt.receiptPrinted ? "green" : "gray"}`}>{receipt.refundedQty === receipt.qty ? "Refunded" : receipt.refundedQty > 0 ? "Partially refunded" : receipt.receiptPrinted ? "Printed" : "Active"}</span></td>
                   <td>
-                    {canPrint ? (
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {canPrint && <>
                         <button className="btn btn-sm btn-secondary" onClick={() => onPrintReceipt(receipt, "customer")}>Customer</button>
                         <button className="btn btn-sm btn-secondary" onClick={() => onPrintReceipt(receipt, "record")}>Record</button>
                         <button className="btn btn-sm btn-primary" onClick={() => onPrintReceipt(receipt, "both")}>Both</button>
-                      </div>
-                    ) : <span className="badge-pill gray">View only</span>}
+                      </>}
+                      {canRefund && receipt.refundedQty < receipt.qty && <button className="btn btn-sm btn-danger" onClick={() => openRefund(receipt)}>Refund</button>}
+                      {!canPrint && !canRefund && <span className="badge-pill gray">View only</span>}
+                    </div>
                   </td>
                 </tr>
               ))}
           </tbody>
         </table>
       </div>
+
+      {refundReceipt && (
+        <Modal title={`Refund Receipt: ${refundReceipt.receiptNo}`} onClose={() => setRefundReceipt(null)}
+          footer={<><button className="btn btn-secondary" onClick={() => setRefundReceipt(null)}>Cancel</button><button className="btn btn-danger" onClick={submitRefund}>Process Refund</button></>}>
+          <div className="form-group">
+            <label>Reason</label>
+            <textarea value={refundForm.reason} onChange={event => setRefundForm(current => ({ ...current, reason: event.target.value }))} placeholder="Return reason, payment reversal, damaged item..." />
+          </div>
+          <table>
+            <thead><tr><th>Item</th><th>Refundable</th><th>Return Qty</th><th>Restock</th></tr></thead>
+            <tbody>
+              {refundReceipt.items.map(item => {
+                const refundable = Number(item.qty || 0) - Number(item.refundedQty || 0);
+                return (
+                  <tr key={item.id}>
+                    <td><div style={{ color: "var(--text)", fontWeight: 600 }}>{item.itemName}</div><span className="badge-pill gray">{item.sku}</span></td>
+                    <td>{refundable}</td>
+                    <td><input type="number" min="0" max={refundable} value={refundForm.items[item.id]?.qty || 0} onChange={event => setRefundForm(current => ({ ...current, items: { ...current.items, [item.id]: { ...current.items[item.id], qty: event.target.value } } }))} style={{ width: 82 }} /></td>
+                    <td><input type="checkbox" checked={refundForm.items[item.id]?.restock ?? true} onChange={event => setRefundForm(current => ({ ...current, items: { ...current.items, [item.id]: { ...current.items[item.id], restock: event.target.checked } } }))} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </Modal>
+      )}
     </>
   );
 }
@@ -1238,7 +1305,7 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canMa
 
   const downloadHistory = () => {
     const rows = [
-      ["Receipt No", "Date", "Time", "Sold By", "Customer Name", "Customer Address", "Customer Contact", "SKU", "Item", "Category", "Supplier", "Qty", "Unit Cost", "Unit Price", "Cost", "Amount", "Profit", "User Printed"],
+      ["Receipt No", "Date", "Time", "Sold By", "Customer Name", "Customer Address", "Customer Contact", "SKU", "Item", "Category", "Supplier", "Sold Qty", "Refunded Qty", "Net Qty", "Unit Cost", "Unit Price", "Net Cost", "Gross Amount", "Refunded Amount", "Net Amount", "Net Profit", "User Printed"],
       ...filteredTxns.map(txn => [
         txn.receiptNo || getReceiptId(txn),
         txn.date,
@@ -1252,10 +1319,14 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canMa
         txn.category || "General",
         txn.supplier || "",
         txn.qty,
+        txn.refundedQty || 0,
+        getTxnQty(txn),
         txn.unitCost || 0,
         txn.unitAmount ?? txn.amount / txn.qty,
         getTxnCost(txn),
         txn.amount,
+        txn.refundedAmount || 0,
+        getTxnRevenue(txn),
         getTxnProfit(txn),
         txn.receiptPrinted ? "Yes" : "No",
       ]),
@@ -1702,20 +1773,20 @@ function UserDashboard({ currentUser, items, txns }) {
   const rangeLabel = getRangeLabel(period, startDate, endDate);
   const filtered = myTxns.filter(t => inDateRange(t, startDate, endDate));
   const now = new Date();
-  const myRevenue = filtered.reduce((s, t) => s + t.amount, 0);
-  const myUnits = filtered.reduce((s, t) => s + t.qty, 0);
+  const myRevenue = filtered.reduce((s, t) => s + getTxnRevenue(t), 0);
+  const myUnits = filtered.reduce((s, t) => s + getTxnQty(t), 0);
   const itemRevenue = {};
   filtered.forEach(t => {
     itemRevenue[t.itemId] = itemRevenue[t.itemId] || { name: t.itemName, sku: t.sku, qty: 0, revenue: 0 };
-    itemRevenue[t.itemId].qty += t.qty;
-    itemRevenue[t.itemId].revenue += t.amount;
+    itemRevenue[t.itemId].qty += getTxnQty(t);
+    itemRevenue[t.itemId].revenue += getTxnRevenue(t);
   });
   const itemRevenueRows = Object.values(itemRevenue).sort((a, b) => b.revenue - a.revenue);
 
   const days7 = Array.from({ length: 7 }, (_, i) => { const d = new Date(now); d.setDate(d.getDate() - (6 - i)); return d.toISOString().split("T")[0]; });
   const barData = days7.map(day => ({
     l: new Date(day).toLocaleDateString("en", { weekday: "short" }).slice(0, 2),
-    v: myTxns.filter(t => t.date === day).reduce((s, t) => s + t.amount, 0),
+    v: myTxns.filter(t => t.date === day).reduce((s, t) => s + getTxnRevenue(t), 0),
   }));
 
   return (
@@ -1741,7 +1812,7 @@ function UserDashboard({ currentUser, items, txns }) {
         </div>
         <div className="stat-card orange">
           <div className="stat-label">Total Earned</div>
-          <div className="stat-value" style={{ color: "var(--accent3)" }}>{fmt(myTxns.reduce((s, t) => s + t.amount, 0))}</div>
+          <div className="stat-value" style={{ color: "var(--accent3)" }}>{fmt(myTxns.reduce((s, t) => s + getTxnRevenue(t), 0))}</div>
           <div className="stat-sub">all time</div>
         </div>
         <div className="stat-card purple">
@@ -1805,8 +1876,8 @@ function UserDashboard({ currentUser, items, txns }) {
                 <tr key={t.id}>
                   <td style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{t.date} {t.time}</td>
                   <td style={{ color: "var(--text)", fontWeight: 600 }}>{t.itemName}</td>
-                  <td><span className="badge-pill blue">{t.qty}</span></td>
-                  <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)" }}>{fmt(t.amount)}</td>
+                  <td><span className="badge-pill blue">{getTxnQty(t)}</span></td>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)" }}>{fmt(getTxnRevenue(t))}</td>
                 </tr>
               ))}
           </tbody>
@@ -1850,9 +1921,9 @@ function UserReceipts({ txns, onPrintReceipt }) {
                     <div style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)" }}>{receipt.customer.contact}</div>
                     <div style={{ fontSize: 11, color: "var(--text3)", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{receipt.customer.address}</div>
                   </td>
-                  <td><span className="badge-pill blue">{receipt.qty} units</span></td>
-                  <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)" }}>{fmt(receipt.total)}</td>
-                  <td><span className={`badge-pill ${receipt.receiptPrinted ? "green" : "orange"}`}>{receipt.receiptPrinted ? "Printed" : "Available"}</span></td>
+                  <td><span className="badge-pill blue">{receipt.qty - receipt.refundedQty} of {receipt.qty} units</span></td>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)" }}>{fmt(receipt.netTotal)}</td>
+                  <td><span className={`badge-pill ${receipt.refundedQty === receipt.qty ? "red" : receipt.refundedQty > 0 ? "orange" : receipt.receiptPrinted ? "green" : "gray"}`}>{receipt.refundedQty === receipt.qty ? "Refunded" : receipt.refundedQty > 0 ? "Partially refunded" : receipt.receiptPrinted ? "Printed" : "Available"}</span></td>
                   <td>
                     <button className="btn btn-sm btn-primary" disabled={receipt.receiptPrinted} onClick={() => onPrintReceipt(receipt, "both")}>
                       Print Copies
@@ -2205,6 +2276,12 @@ export default function App() {
     return result;
   };
 
+  const handleRefund = async (receiptId, form) => {
+    const result = await api.post(`/transactions/${receiptId}/refund`, form);
+    await fetchData();
+    return result;
+  };
+
   const handleAddCustomer = async (form) => {
     const result = await api.post("/customers", form);
     await fetchData();
@@ -2311,6 +2388,7 @@ export default function App() {
   const canManageData = hasPermission(user, "manageData");
   const canViewCustomers = hasPermission(user, "viewCustomers");
   const canManageCustomers = hasPermission(user, "manageCustomers");
+  const canRefund = hasPermission(user, "manageRefunds");
   const canUseManagementDashboard = canViewReports || canViewAllTransactions;
   const avatarColor = canUseManagementDashboard ? "rgba(199,125,255,0.15)" : "rgba(0,144,255,0.15)";
   const avatarText = user.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
@@ -2388,7 +2466,7 @@ export default function App() {
           {page === "inventory" && hasPermission(user, "viewInventory") && <AdminInventory items={items} stockAdjustments={stockAdjustments} onAdd={handleAddItem} onEdit={handleEditItem} onDelete={handleDeleteItem} onAdjust={handleAdjustStock} onBulkImport={handleBulkImport} readOnly={!canManageInventory} />}
           {page === "users" && canManageUsers && <AdminUsers users={users} currentUser={user} onAdd={handleAddUser} onEdit={handleEditUser} onDelete={handleDeleteUser} onToggle={handleToggleUser} onResetPassword={handleResetPassword} />}
           {page === "customers" && canViewCustomers && <Customers customers={customers} onAdd={handleAddCustomer} onEdit={handleEditCustomer} onDelete={handleDeleteCustomer} canManage={canManageCustomers} />}
-          {page === "transactions" && canViewAllTransactions && <AdminTransactions txns={txns} onPrintReceipt={handlePrintReceipt} canPrint={canPrint} />}
+          {page === "transactions" && canViewAllTransactions && <AdminTransactions txns={txns} onPrintReceipt={handlePrintReceipt} onRefund={handleRefund} canPrint={canPrint} canRefund={canRefund} />}
           {page === "data" && canViewAllTransactions && <AdminDataTools txns={txns} onClearHistory={handleClearHistory} onResetFresh={handleResetFresh} onResetDemo={handleResetDemo} canManageData={canManageData} />}
           {page === "audit" && canManageData && <AdminAuditLogs logs={auditLogs} />}
           {page === "settings" && canManageSettings && <BusinessSettings key={`${JSON.stringify(businessProfile)}-${JSON.stringify(license)}-${JSON.stringify(receiptSettings)}`} businessProfile={businessProfile} license={license} receiptSettings={receiptSettings} user={user} onSaveProfile={handleSaveBusinessProfile} onSaveLicense={handleSaveLicense} onSaveReceiptSettings={handleSaveReceiptSettings} />}

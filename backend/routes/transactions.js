@@ -22,6 +22,8 @@ const findReceiptTransactions = (db, receiptId, instanceId) =>
 const canAccessReceipt = (req, txns) =>
   hasPermission(req.user.role, "viewAllTransactions") || txns.every(t => t.userId === req.user.id);
 
+const getRefundableQty = txn => Number(txn.qty || 0) - Number(txn.refundedQty || 0);
+
 // GET transactions (Admin sees all, User sees only their own)
 router.get("/", authenticateToken, (req, res) => {
   const db = getDB();
@@ -32,6 +34,13 @@ router.get("/", authenticateToken, (req, res) => {
     const userTxns = instanceTxns.filter(t => t.userId === req.user.id);
     res.json(userTxns);
   }
+});
+
+router.get("/refunds", authenticateToken, requirePermission("viewAllTransactions"), (req, res) => {
+  const db = getDB();
+  res.json((db.refunds || [])
+    .filter(refund => refund.instanceId === req.user.instanceId)
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))));
 });
 
 // POST create transaction (Make a sale)
@@ -125,6 +134,10 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
         receiptPrinted: false,
         receiptPrintedAt: null,
         receiptPrintedBy: null,
+        refundedQty: 0,
+        refundedAmount: 0,
+        refundedCostAmount: 0,
+        refundedProfit: 0,
         userId: req.user.id,
         userName: req.user.name,
         date,
@@ -202,6 +215,129 @@ router.post("/", authenticateToken, requirePermission("sell"), (req, res) => {
       receiptPrinted: false,
     },
     items: db.items.filter(item => item.instanceId === req.user.instanceId)
+  });
+});
+
+router.post("/:receiptId/refund", authenticateToken, requirePermission("manageRefunds"), (req, res) => {
+  const db = getDB();
+  const receiptTxns = findReceiptTransactions(db, req.params.receiptId, req.user.instanceId);
+  if (receiptTxns.length === 0) return res.status(404).json({ message: "Receipt not found" });
+
+  const requestedLines = Array.isArray(req.body?.items) ? req.body.items : [];
+  const reason = String(req.body?.reason || "").trim();
+  if (!reason) return res.status(400).json({ message: "A refund reason is required" });
+  if (requestedLines.length === 0) return res.status(400).json({ message: "Select at least one item to refund" });
+
+  const lines = [];
+  const selectedTransactionIds = new Set();
+  for (const requestedLine of requestedLines) {
+    const txn = receiptTxns.find(item => String(item.id) === String(requestedLine.transactionId));
+    const qty = Number(requestedLine.qty);
+    const restock = requestedLine.restock !== false;
+
+    if (!txn) return res.status(400).json({ message: "A selected refund item does not belong to this receipt" });
+    if (selectedTransactionIds.has(String(txn.id))) return res.status(400).json({ message: `${txn.itemName} was selected more than once` });
+    selectedTransactionIds.add(String(txn.id));
+    if (!Number.isInteger(qty) || qty <= 0) return res.status(400).json({ message: `Refund quantity for ${txn.itemName} must be a positive whole number` });
+    if (qty > getRefundableQty(txn)) return res.status(400).json({ message: `Refund quantity for ${txn.itemName} exceeds the remaining refundable quantity` });
+
+    const inventoryItem = db.items.find(item => item.id === txn.itemId && item.instanceId === req.user.instanceId);
+    if (restock && !inventoryItem) {
+      return res.status(400).json({ message: `${txn.itemName} no longer exists in inventory. Process it without restocking or recreate the item first.` });
+    }
+
+    const unitAmount = Number(txn.unitAmount ?? Number(txn.amount || 0) / Number(txn.qty || 1));
+    const unitCost = Number(txn.unitCost || 0);
+    lines.push({
+      transactionId: txn.id,
+      itemId: txn.itemId,
+      sku: txn.sku,
+      itemName: txn.itemName,
+      qty,
+      restock,
+      unitAmount,
+      unitCost,
+      amount: unitAmount * qty,
+      costAmount: unitCost * qty,
+      profit: (unitAmount - unitCost) * qty,
+    });
+  }
+
+  const now = new Date().toISOString();
+  const refund = {
+    id: Date.now() + Math.random(),
+    instanceId: req.user.instanceId,
+    receiptId: req.params.receiptId,
+    receiptNo: receiptTxns[0].receiptNo || req.params.receiptId,
+    customer: receiptTxns[0].customer,
+    reason,
+    items: lines,
+    qty: lines.reduce((sum, line) => sum + line.qty, 0),
+    amount: lines.reduce((sum, line) => sum + line.amount, 0),
+    costAmount: lines.reduce((sum, line) => sum + line.costAmount, 0),
+    profit: lines.reduce((sum, line) => sum + line.profit, 0),
+    processedBy: req.user.id,
+    processedByName: req.user.name,
+    createdAt: now,
+  };
+
+  db.txns = db.txns.map(txn => {
+    const line = lines.find(item => String(item.transactionId) === String(txn.id));
+    return line
+      ? {
+          ...txn,
+          refundedQty: Number(txn.refundedQty || 0) + line.qty,
+          refundedAmount: Number(txn.refundedAmount || 0) + line.amount,
+          refundedCostAmount: Number(txn.refundedCostAmount || 0) + line.costAmount,
+          refundedProfit: Number(txn.refundedProfit || 0) + line.profit,
+        }
+      : txn;
+  });
+
+  const stockRestorations = [];
+  db.items = db.items.map(item => {
+    const restoredQty = lines
+      .filter(line => line.restock && line.itemId === item.id)
+      .reduce((sum, line) => sum + line.qty, 0);
+    if (item.instanceId !== req.user.instanceId || restoredQty === 0) return item;
+
+    const nextItem = { ...item, qty: item.qty + restoredQty, sold: Math.max(0, Number(item.sold || 0) - restoredQty) };
+    stockRestorations.push({ item: nextItem, previousQty: item.qty, newQty: nextItem.qty });
+    return nextItem;
+  });
+
+  db.refunds = [...(db.refunds || []), refund];
+  saveCollection("txns", db.txns);
+  saveCollection("items", db.items);
+  saveCollection("refunds", db.refunds);
+  stockRestorations.forEach(({ item, previousQty, newQty }) => {
+    syncLowStockAlert({ db, item, previousQty });
+    recordStockAdjustment({
+      db,
+      req,
+      item,
+      previousQty,
+      newQty,
+      type: "refund_restock",
+      reason,
+      referenceType: "refund",
+      referenceId: refund.id,
+    });
+  });
+  recordAuditLog({
+    req,
+    action: "sale.refund",
+    entityType: "refund",
+    entityId: refund.id,
+    summary: `Refunded ${refund.qty} unit(s) from receipt ${refund.receiptNo}`,
+    metadata: { receiptNo: refund.receiptNo, reason, amount: refund.amount, items: lines },
+  });
+
+  res.status(201).json({
+    message: "Refund processed successfully",
+    refund,
+    transactions: findReceiptTransactions(db, req.params.receiptId, req.user.instanceId),
+    items: db.items.filter(item => item.instanceId === req.user.instanceId),
   });
 });
 
