@@ -5,6 +5,7 @@ import { icons as I } from "./constants/icons";
 import { formatCurrency as fmt, formatNumber as fmtNum } from "./utils/formatters";
 import { BarChart } from "./components/charts/BarChart";
 import { LineChart } from "./components/charts/LineChart";
+import { HorizontalRankingChart } from "./components/charts/HorizontalRankingChart";
 import { NotificationPanel } from "./components/notifications/NotificationPanel";
 import { Modal } from "./components/ui/Modal";
 
@@ -548,6 +549,8 @@ function AdminDashboard({ items, users, txns }) {
     userTxns[t.userId].profit += getTxnProfit(t);
   });
   const userRevenueRows = Object.values(userTxns).sort((a, b) => b.amount - a.amount);
+  const topProductChartData = best.map(item => ({ id: item.sku, label: item.name, meta: item.sku, value: item.revenue }));
+  const topUserChartData = userRevenueRows.slice(0, 5).map(user => ({ id: user.id, label: user.name, meta: `${user.count} sales`, value: user.amount }));
   const exportRange = `${period}-${startDate}-to-${endDate}`;
   const downloadItemRevenue = () => downloadCSV(`item-revenue-${exportRange}.csv`, [
     ["From", "To", "Item", "SKU", "Category", "Supplier", "Net Units Sold", "Net Revenue", "Net Profit"],
@@ -679,6 +682,19 @@ function AdminDashboard({ items, users, txns }) {
           <h4>Units Sold (7 days)</h4>
           <p>Daily unit movement</p>
           <LineChart data={lineData} color="var(--accent2)" />
+        </div>
+      </div>
+
+      <div className="chart-grid">
+        <div className="chart-card">
+          <h4>Top Products</h4>
+          <p>Net revenue leaders - {rangeLabel}</p>
+          <HorizontalRankingChart data={topProductChartData} formatter={fmt} />
+        </div>
+        <div className="chart-card">
+          <h4>Top Users</h4>
+          <p>Net revenue contribution - {rangeLabel}</p>
+          <HorizontalRankingChart data={topUserChartData} formatter={fmt} />
         </div>
       </div>
 
