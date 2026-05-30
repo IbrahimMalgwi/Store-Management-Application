@@ -462,13 +462,43 @@ function AdminDashboard({ items, users, txns }) {
 
   const userTxns = {};
   filtered.forEach(t => {
-    userTxns[t.userId] = userTxns[t.userId] || { count: 0, qty: 0, amount: 0, profit: 0, name: t.userName };
+    const user = users.find(item => item.id === t.userId);
+    userTxns[t.userId] = userTxns[t.userId] || { id: t.userId, count: 0, qty: 0, amount: 0, profit: 0, name: t.userName, email: user?.email || "" };
     userTxns[t.userId].count++;
     userTxns[t.userId].qty += getTxnQty(t);
     userTxns[t.userId].amount += getTxnRevenue(t);
     userTxns[t.userId].profit += getTxnProfit(t);
   });
   const userRevenueRows = Object.values(userTxns).sort((a, b) => b.amount - a.amount);
+  const exportRange = `${period}-${startDate}-to-${endDate}`;
+  const downloadItemRevenue = () => downloadCSV(`item-revenue-${exportRange}.csv`, [
+    ["From", "To", "Item", "SKU", "Category", "Supplier", "Net Units Sold", "Net Revenue", "Net Profit"],
+    ...itemRevenueRows.map(item => [
+      startDate,
+      endDate,
+      item.name,
+      item.sku,
+      item.category,
+      item.supplier || "Unassigned",
+      item.qty,
+      item.revenue,
+      item.profit,
+    ]),
+  ]);
+  const downloadUserRevenue = () => downloadCSV(`user-revenue-${exportRange}.csv`, [
+    ["From", "To", "User ID", "User", "Email", "Transactions", "Net Units Sold", "Net Revenue", "Net Profit"],
+    ...userRevenueRows.map(user => [
+      startDate,
+      endDate,
+      user.id,
+      user.name,
+      user.email,
+      user.count,
+      user.qty,
+      user.amount,
+      user.profit,
+    ]),
+  ]);
 
   const categoryRows = Object.values(filtered.reduce((acc, txn) => {
     const key = txn.category || "General";
@@ -580,7 +610,10 @@ function AdminDashboard({ items, users, txns }) {
         </div>
 
         <div className="table-card">
-          <div className="table-header"><h3>Revenue by User</h3></div>
+          <div className="table-header">
+            <h3>Revenue by User</h3>
+            <button className="btn btn-sm btn-secondary" disabled={userRevenueRows.length === 0} onClick={downloadUserRevenue}>Export CSV</button>
+          </div>
           <table>
             <thead><tr><th>User</th><th>Transactions</th><th>Qty</th><th>Revenue</th><th>Profit</th></tr></thead>
             <tbody>
@@ -600,7 +633,10 @@ function AdminDashboard({ items, users, txns }) {
       </div>
 
       <div className="table-card" style={{ marginTop: 14 }}>
-        <div className="table-header"><h3>All Item Profit</h3></div>
+        <div className="table-header">
+          <h3>All Item Profit</h3>
+          <button className="btn btn-sm btn-secondary" disabled={itemRevenueRows.length === 0} onClick={downloadItemRevenue}>Export CSV</button>
+        </div>
         <table>
           <thead><tr><th>Item</th><th>Category</th><th>Supplier</th><th>Units Sold</th><th>Revenue</th><th>Profit</th></tr></thead>
           <tbody>
