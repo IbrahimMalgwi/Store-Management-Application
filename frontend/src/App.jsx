@@ -2128,15 +2128,20 @@ function UserReceipts({ txns, onPrintReceipt }) {
 // ─── USER: Make a Sale ────────────────────────────────────────────────────────
 function UserSell({ items, customers, onSell, onPrintReceipt }) {
   const [cart, setCart] = useState({});
+  const [search, setSearch] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [customer, setCustomer] = useState({ name: "", address: "", phone: "", email: "" });
   const [confirm, setConfirm] = useState(false);
   const [done, setDone] = useState(false);
   const [lastReceipt, setLastReceipt] = useState(null);
 
-  const available = items.filter(i => i.qty > 0);
+  const query = search.trim().toLowerCase();
+  const available = items.filter(i =>
+    i.qty > 0 && (!query || i.name.toLowerCase().includes(query) || String(i.sku).toLowerCase().includes(query))
+  );
   const cartItems = Object.entries(cart).filter(([, q]) => q > 0).map(([id, qty]) => ({ ...items.find(i => i.id === +id), qty }));
   const total = cartItems.reduce((s, i) => s + i.amount * i.qty, 0);
+  const totalUnits = cartItems.reduce((s, i) => s + i.qty, 0);
   const customerComplete = customer.name.trim() && customer.address.trim() && (customer.phone.trim() || customer.email.trim());
 
   const selectCustomer = (id) => {
@@ -2189,27 +2194,33 @@ function UserSell({ items, customers, onSell, onPrintReceipt }) {
         </div>
       )}
 
-      <div className="sell-layout">
+      <div className={`sell-layout ${cartItems.length > 0 ? "has-mobile-checkout" : ""}`}>
         <div className="table-card">
-          <div className="table-header"><h3>Available Items</h3></div>
+          <div className="table-header sell-items-header">
+            <h3>Available Items</h3>
+            <div className="search-wrap sell-search">
+              <span className="search-icon">{I.search}</span>
+              <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search item or SKU" />
+            </div>
+          </div>
           {available.map(item => (
-            <div key={item.id} className="sell-item-row" style={{ padding: "12px 20px" }}>
+            <div key={item.id} className="sell-item-row">
               <div className="sell-item-info">
                 <p>{item.name}</p>
                 <span>{item.sku} · {fmt(item.amount)} · {item.qty} left</span>
               </div>
               <div className="qty-control">
-                <button className="qty-btn" onClick={() => set(item.id, -1)}>−</button>
+                <button className="qty-btn" aria-label={`Remove one ${item.name}`} disabled={(cart[item.id] || 0) === 0} onClick={() => set(item.id, -1)}>−</button>
                 <span className="qty-value">{cart[item.id] || 0}</span>
-                <button className="qty-btn" onClick={() => set(item.id, 1)}>+</button>
+                <button className="qty-btn" aria-label={`Add one ${item.name}`} disabled={(cart[item.id] || 0) >= item.qty} onClick={() => set(item.id, 1)}>+</button>
               </div>
             </div>
           ))}
-          {available.length === 0 && <div className="empty">No items in stock</div>}
+          {available.length === 0 && <div className="empty">{query ? "No matching items" : "No items in stock"}</div>}
         </div>
 
-        <div>
-          <div className="table-card">
+        <div className="sell-cart-column">
+          <div className="table-card sell-cart-panel">
             <div className="table-header"><h3>Cart Summary</h3></div>
             <div style={{ padding: "0 20px" }}>
               {cartItems.length === 0 ? <div className="empty" style={{ padding: "20px 0" }}>Empty cart</div> :
@@ -2237,6 +2248,16 @@ function UserSell({ items, customers, onSell, onPrintReceipt }) {
           </div>
         </div>
       </div>
+
+      {cartItems.length > 0 && (
+        <div className="mobile-cart-bar">
+          <div>
+            <span>{totalUnits} {totalUnits === 1 ? "unit" : "units"} in cart</span>
+            <strong>{fmt(total)}</strong>
+          </div>
+          <button className="btn btn-primary" onClick={() => setConfirm(true)}>{I.check} Review Sale</button>
+        </div>
+      )}
 
       {confirm && (
         <Modal title="Confirm Sale" onClose={() => setConfirm(false)}
