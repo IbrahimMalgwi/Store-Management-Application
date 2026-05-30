@@ -8,7 +8,11 @@ import { LineChart } from "./components/charts/LineChart";
 import { HorizontalRankingChart } from "./components/charts/HorizontalRankingChart";
 import { NotificationPanel } from "./components/notifications/NotificationPanel";
 import { Modal } from "./components/ui/Modal";
+import { ConfirmDialog } from "./components/ui/ConfirmDialog";
+import { PaginationControls, TableControls } from "./components/ui/TableControls";
+import { ReceiptPreviewModal } from "./components/ui/ReceiptPreviewModal";
 import { useToast } from "./hooks/useToast";
+import { paginateRows, sortRows } from "./utils/table";
 
 const DEFAULT_BUSINESS_PROFILE = {
   businessName: "StockOS",
@@ -891,6 +895,16 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
   const [form, setForm] = useState({ sku: "", name: "", qty: "", reorderThreshold: 5, amount: "", purchaseCost: "", category: "General", supplier: "", description: "" });
   const [editId, setEditId] = useState(null);
   const [busyAction, setBusyAction] = useState("");
+  const [deleteItem, setDeleteItem] = useState(null);
+  const [sort, setSort] = useState("name-asc");
+  const [page, setPage] = useState(1);
+  const sortOptions = [
+    { value: "name-asc", label: "Name A-Z", getValue: item => item.name },
+    { value: "name-desc", label: "Name Z-A", getValue: item => item.name, direction: "desc" },
+    { value: "qty-asc", label: "Stock: Low to High", getValue: item => Number(item.qty) },
+    { value: "qty-desc", label: "Stock: High to Low", getValue: item => Number(item.qty), direction: "desc" },
+    { value: "price-desc", label: "Price: High to Low", getValue: item => Number(item.amount), direction: "desc" },
+  ];
 
   const filtered = items.filter(i =>
     i.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -898,6 +912,7 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
     String(i.category || "").toLowerCase().includes(search.toLowerCase()) ||
     String(i.supplier || "").toLowerCase().includes(search.toLowerCase())
   );
+  const pagedItems = paginateRows(sortRows(filtered, sort, sortOptions), page);
 
   const openAdd = () => { setForm({ sku: `SKU-00${items.length + 1}`, name: "", qty: "", reorderThreshold: 5, amount: "", purchaseCost: "", category: "General", supplier: "", description: "" }); setModal("add"); };
   const openEdit = (item) => { setForm({ sku: item.sku, name: item.name, qty: item.qty, reorderThreshold: getItemThreshold(item), amount: item.amount, purchaseCost: item.purchaseCost || 0, category: item.category || "General", supplier: item.supplier || "", description: item.description }); setEditId(item.id); setModal("edit"); };
@@ -920,14 +935,16 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
     }
   };
 
-  const del = async (id) => {
-    if (confirm("Delete this item?")) {
-      try {
-        await onDelete(id);
-        showToast("Inventory item deleted.");
-      } catch (err) {
-        showToast(err.message || "Error deleting item", "error");
-      }
+  const del = async () => {
+    setBusyAction("delete");
+    try {
+      await onDelete(deleteItem.id);
+      setDeleteItem(null);
+      showToast("Inventory item deleted.");
+    } catch (err) {
+      showToast(err.message || "Error deleting item", "error");
+    } finally {
+      setBusyAction("");
     }
   };
 
@@ -997,21 +1014,18 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
       <div className="section-header">
         <h2>Inventory</h2>
         <div style={{ display: "flex", gap: 8 }}>
-          <div className="search-wrap">
-            <span className="search-icon">{I.search}</span>
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search items…" style={{ width: 200 }} />
-          </div>
           {!readOnly && <button className="btn btn-secondary" onClick={() => setImportModal(true)}>Import Stock</button>}
           {!readOnly && <button className="btn btn-primary" onClick={openAdd}>{I.add} Add Item</button>}
         </div>
       </div>
 
       <div className="table-card">
+        <TableControls search={search} onSearchChange={value => { setSearch(value); setPage(1); }} placeholder="Search items..." sort={sort} onSortChange={value => { setSort(value); setPage(1); }} sortOptions={sortOptions} total={filtered.length} />
         <table>
           <thead><tr><th>SKU</th><th>Name</th><th>Category</th><th>Supplier</th><th>Qty</th><th>Reorder At</th><th>Status</th><th>Cost</th><th>Price</th><th>Margin</th><th>Sold</th>{!readOnly && <th>Actions</th>}</tr></thead>
           <tbody>
             {filtered.length === 0 ? <tr><td colSpan={readOnly ? 11 : 12}><div className="empty">No items found</div></td></tr> :
-              filtered.map(item => {
+              pagedItems.rows.map(item => {
                 const threshold = getItemThreshold(item);
                 const isLow = item.qty <= threshold;
                 return <tr key={item.id}>
@@ -1032,14 +1046,17 @@ function AdminInventory({ items, stockAdjustments = [], onAdd, onEdit, onDelete,
                     <div style={{ display: "flex", gap: 6 }}>
                       <button className="btn btn-sm btn-secondary" onClick={() => openEdit(item)}>{I.edit}</button>
                       <button className="btn btn-sm btn-secondary" onClick={() => openAdjust(item)}>Adjust</button>
-                      <button className="btn btn-sm btn-danger" onClick={() => del(item.id)}>{I.del}</button>
+                      <button className="btn btn-sm btn-danger" onClick={() => setDeleteItem(item)}>{I.del}</button>
                     </div>
                   </td>}
                 </tr>;
               })}
           </tbody>
         </table>
+        <PaginationControls page={pagedItems.page} pages={pagedItems.pages} onPageChange={setPage} />
       </div>
+
+      <ConfirmDialog open={Boolean(deleteItem)} title="Delete Inventory Item" message={`Delete ${deleteItem?.name || "this item"}? This removes it from the current inventory.`} confirmLabel="Delete Item" busy={busyAction === "delete"} onConfirm={del} onClose={() => setDeleteItem(null)} />
 
       {modal && (
         <Modal title={modal === "add" ? "Add Item" : "Edit Item"} onClose={() => setModal(null)}
@@ -1150,6 +1167,18 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
   const [resetUser, setResetUser] = useState(null);
   const [editId, setEditId] = useState(null);
   const [busyAction, setBusyAction] = useState("");
+  const [deleteUser, setDeleteUser] = useState(null);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("name-asc");
+  const [page, setPage] = useState(1);
+  const sortOptions = [
+    { value: "name-asc", label: "Name A-Z", getValue: item => item.name },
+    { value: "name-desc", label: "Name Z-A", getValue: item => item.name, direction: "desc" },
+    { value: "role-asc", label: "Role A-Z", getValue: item => item.role },
+    { value: "status-desc", label: "Active First", getValue: item => Number(item.active), direction: "desc" },
+  ];
+  const filtered = users.filter(item => item.name.toLowerCase().includes(search.toLowerCase()) || item.email.toLowerCase().includes(search.toLowerCase()) || item.role.toLowerCase().includes(search.toLowerCase()));
+  const pagedUsers = paginateRows(sortRows(filtered, sort, sortOptions), page);
 
   const openAdd = () => { setForm({ name: "", email: "", password: "", role: "cashier", active: true }); setModal("add"); };
   const openEdit = (u) => { setForm({ name: u.name, email: u.email, password: u.password, role: u.role, active: u.active }); setEditId(u.id); setModal("edit"); };
@@ -1176,14 +1205,16 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
     }
   };
 
-  const del = async (id) => {
-    if (confirm("Delete this user?")) {
-      try {
-        await onDelete(id);
-        showToast("User deleted.");
-      } catch (err) {
-        showToast(err.message || "Error deleting user", "error");
-      }
+  const del = async () => {
+    setBusyAction("delete");
+    try {
+      await onDelete(deleteUser.id);
+      setDeleteUser(null);
+      showToast("User deleted.");
+    } catch (err) {
+      showToast(err.message || "Error deleting user", "error");
+    } finally {
+      setBusyAction("");
     }
   };
 
@@ -1222,10 +1253,11 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
       </div>
 
       <div className="table-card">
+        <TableControls search={search} onSearchChange={value => { setSearch(value); setPage(1); }} placeholder="Search users..." sort={sort} onSortChange={value => { setSort(value); setPage(1); }} sortOptions={sortOptions} total={filtered.length} />
         <table>
           <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Created</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            {users.map(u => (
+            {pagedUsers.rows.map(u => (
               <tr key={u.id}>
                 <td style={{ color: "var(--text)", fontWeight: 600 }}>{u.name}</td>
                 <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{u.email}</td>
@@ -1240,14 +1272,17 @@ function AdminUsers({ users, currentUser, onAdd, onEdit, onDelete, onToggle, onR
                   <div style={{ display: "flex", gap: 6 }}>
                     <button className="btn btn-sm btn-secondary" onClick={() => openEdit(u)}>{I.edit}</button>
                     {u.id !== currentUser.id && <button className="btn btn-sm btn-secondary" onClick={() => openReset(u)}>Reset Password</button>}
-                    <button className="btn btn-sm btn-danger" onClick={() => del(u.id)}>{I.del}</button>
+                    <button className="btn btn-sm btn-danger" onClick={() => setDeleteUser(u)}>{I.del}</button>
                   </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        <PaginationControls page={pagedUsers.page} pages={pagedUsers.pages} onPageChange={setPage} />
       </div>
+
+      <ConfirmDialog open={Boolean(deleteUser)} title="Delete User" message={`Delete ${deleteUser?.name || "this user"}? They will no longer be able to access this store instance.`} confirmLabel="Delete User" busy={busyAction === "delete"} onConfirm={del} onClose={() => setDeleteUser(null)} />
 
       {modal && (
         <Modal title={modal === "add" ? "Add User" : "Edit User"} onClose={() => setModal(null)}
@@ -1303,6 +1338,14 @@ function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
   const [form, setForm] = useState(emptyForm);
   const [editId, setEditId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [deleteCustomer, setDeleteCustomer] = useState(null);
+  const [sort, setSort] = useState("name-asc");
+  const [page, setPage] = useState(1);
+  const sortOptions = [
+    { value: "name-asc", label: "Name A-Z", getValue: item => item.name },
+    { value: "name-desc", label: "Name Z-A", getValue: item => item.name, direction: "desc" },
+    { value: "created-desc", label: "Newest First", getValue: item => item.createdAt || "", direction: "desc" },
+  ];
   const query = search.toLowerCase();
   const filtered = customers.filter(customer =>
     customer.name.toLowerCase().includes(query)
@@ -1310,6 +1353,7 @@ function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
     || String(customer.email || "").toLowerCase().includes(query)
     || customer.address.toLowerCase().includes(query)
   );
+  const pagedCustomers = paginateRows(sortRows(filtered, sort, sortOptions), page);
 
   const openAdd = () => {
     setForm(emptyForm);
@@ -1341,13 +1385,16 @@ function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
     }
   };
 
-  const del = async (id) => {
-    if (!confirm("Delete this customer record? Past receipts will keep their customer snapshot.")) return;
+  const del = async () => {
+    setSaving(true);
     try {
-      await onDelete(id);
+      await onDelete(deleteCustomer.id);
+      setDeleteCustomer(null);
       showToast("Customer deleted.");
     } catch (err) {
       showToast(err.message || "Error deleting customer", "error");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1356,20 +1403,17 @@ function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
       <div className="section-header">
         <h2>Customers</h2>
         <div style={{ display: "flex", gap: 8 }}>
-          <div className="search-wrap">
-            <span className="search-icon">{I.search}</span>
-            <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search customers…" style={{ width: 220 }} />
-          </div>
           <button className="btn btn-primary" onClick={openAdd}>{I.add} Add Customer</button>
         </div>
       </div>
 
       <div className="table-card">
+        <TableControls search={search} onSearchChange={value => { setSearch(value); setPage(1); }} placeholder="Search customers..." sort={sort} onSortChange={value => { setSort(value); setPage(1); }} sortOptions={sortOptions} total={filtered.length} />
         <table>
           <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Address</th>{canManage && <th>Actions</th>}</tr></thead>
           <tbody>
             {filtered.length === 0 ? <tr><td colSpan={canManage ? 5 : 4}><div className="empty">No customers found</div></td></tr> :
-              filtered.map(customer => (
+              pagedCustomers.rows.map(customer => (
                 <tr key={customer.id}>
                   <td style={{ color: "var(--text)", fontWeight: 600 }}>{customer.name}</td>
                   <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{customer.phone || "-"}</td>
@@ -1378,14 +1422,17 @@ function Customers({ customers, onAdd, onEdit, onDelete, canManage = false }) {
                   {canManage && <td>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button className="btn btn-sm btn-secondary" onClick={() => openEdit(customer)}>{I.edit}</button>
-                      <button className="btn btn-sm btn-danger" onClick={() => del(customer.id)}>{I.del}</button>
+                      <button className="btn btn-sm btn-danger" onClick={() => setDeleteCustomer(customer)}>{I.del}</button>
                     </div>
                   </td>}
                 </tr>
               ))}
           </tbody>
         </table>
+        <PaginationControls page={pagedCustomers.page} pages={pagedCustomers.pages} onPageChange={setPage} />
       </div>
+
+      <ConfirmDialog open={Boolean(deleteCustomer)} title="Delete Customer" message={`Delete ${deleteCustomer?.name || "this customer"}? Past receipts will keep their saved customer details.`} confirmLabel="Delete Customer" busy={saving} onConfirm={del} onClose={() => setDeleteCustomer(null)} />
 
       {modal && (
         <Modal title={modal === "edit" ? "Edit Customer" : "Add Customer"} onClose={() => setModal(null)}
@@ -1409,6 +1456,14 @@ function AdminTransactions({ txns, onPrintReceipt, onRefund, canPrint = false, c
   const [refundReceipt, setRefundReceipt] = useState(null);
   const [refundForm, setRefundForm] = useState({ reason: "", items: {} });
   const [refunding, setRefunding] = useState(false);
+  const [sort, setSort] = useState("date-desc");
+  const [page, setPage] = useState(1);
+  const sortOptions = [
+    { value: "date-desc", label: "Newest First", getValue: item => `${item.date} ${item.time}`, direction: "desc" },
+    { value: "date-asc", label: "Oldest First", getValue: item => `${item.date} ${item.time}` },
+    { value: "total-desc", label: "Total: High to Low", getValue: item => Number(item.netTotal), direction: "desc" },
+    { value: "customer-asc", label: "Customer A-Z", getValue: item => item.customer.name },
+  ];
   const receipts = buildReceipts(txns);
   const query = search.toLowerCase();
   const filtered = receipts.filter(receipt =>
@@ -1417,7 +1472,8 @@ function AdminTransactions({ txns, onPrintReceipt, onRefund, canPrint = false, c
     receipt.customer.name.toLowerCase().includes(query) ||
     receipt.customer.contact.toLowerCase().includes(query) ||
     receipt.items.some(item => item.itemName.toLowerCase().includes(query) || item.sku.toLowerCase().includes(query))
-  ).slice(0, 50);
+  );
+  const pagedReceipts = paginateRows(sortRows(filtered, sort, sortOptions), page);
 
   const openRefund = (receipt) => {
     setRefundReceipt(receipt);
@@ -1449,17 +1505,14 @@ function AdminTransactions({ txns, onPrintReceipt, onRefund, canPrint = false, c
     <>
       <div className="section-header">
         <h2>Receipts</h2>
-        <div className="search-wrap">
-          <span className="search-icon">{I.search}</span>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search receipts…" style={{ width: 240 }} />
-        </div>
       </div>
       <div className="table-card">
+        <TableControls search={search} onSearchChange={value => { setSearch(value); setPage(1); }} placeholder="Search receipts..." sort={sort} onSortChange={value => { setSort(value); setPage(1); }} sortOptions={sortOptions} total={filtered.length} />
         <table>
           <thead><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Sold By</th><th>Items</th><th>Net Total</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {filtered.length === 0 ? <tr><td colSpan={8}><div className="empty">No receipts</div></td></tr> :
-              filtered.map(receipt => (
+              pagedReceipts.rows.map(receipt => (
                 <tr key={receipt.id}>
                   <td style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{receipt.date}<br />{receipt.time}</td>
                   <td><span className="badge-pill gray">{receipt.receiptNo}</span></td>
@@ -1487,6 +1540,7 @@ function AdminTransactions({ txns, onPrintReceipt, onRefund, canPrint = false, c
               ))}
           </tbody>
         </table>
+        <PaginationControls page={pagedReceipts.page} pages={pagedReceipts.pages} onPageChange={setPage} />
       </div>
 
       {refundReceipt && (
@@ -1525,6 +1579,12 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canMa
   const [startDate, setStartDate] = useState(getStartDateForPeriod("daily"));
   const [endDate, setEndDate] = useState(todayString());
   const [busyAction, setBusyAction] = useState("");
+  const [pendingAction, setPendingAction] = useState(null);
+  const actions = {
+    history: { title: "Delete Sales History", message: "Delete all sales history, receipts, notifications, and reset sold counts?", confirmLabel: "Delete History", handler: onClearHistory },
+    fresh: { title: "Start Fresh", message: "Clear inventory, users, sales history, and notifications while keeping only your current admin account?", confirmLabel: "Start Fresh", handler: onResetFresh },
+    demo: { title: "Restore Demo Data", message: "Replace current inventory, users, sales history, and notifications with the original demo data?", confirmLabel: "Restore Demo", handler: onResetDemo, tone: "primary" },
+  };
 
   const runAction = async (action, handler) => {
     setBusyAction(action);
@@ -1535,6 +1595,12 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canMa
     } finally {
       setBusyAction("");
     }
+  };
+
+  const confirmAction = async () => {
+    const action = actions[pendingAction];
+    await runAction(pendingAction, action.handler);
+    setPendingAction(null);
   };
 
   const syncPeriod = (nextPeriod) => {
@@ -1630,24 +1696,25 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canMa
               <div style={{ fontWeight: 700, fontSize: 13 }}>Delete sales history</div>
               <div style={{ color: "var(--text3)", fontSize: 12 }}>Clears transactions, receipts, notifications, and resets sold counts.</div>
             </div>
-            <button className="btn btn-danger" disabled={Boolean(busyAction)} onClick={() => runAction("history", onClearHistory)}>{busyAction === "history" ? "Deleting..." : "Delete History"}</button>
+            <button className="btn btn-danger" disabled={Boolean(busyAction)} onClick={() => setPendingAction("history")}>Delete History</button>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
             <div>
               <div style={{ fontWeight: 700, fontSize: 13 }}>Start fresh</div>
               <div style={{ color: "var(--text3)", fontSize: 12 }}>Clears inventory, users, history, and notifications. Keeps only the current admin account.</div>
             </div>
-            <button className="btn btn-danger" disabled={Boolean(busyAction)} onClick={() => runAction("fresh", onResetFresh)}>{busyAction === "fresh" ? "Resetting..." : "Start Fresh"}</button>
+            <button className="btn btn-danger" disabled={Boolean(busyAction)} onClick={() => setPendingAction("fresh")}>Start Fresh</button>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
             <div>
               <div style={{ fontWeight: 700, fontSize: 13 }}>Restore demo data</div>
               <div style={{ color: "var(--text3)", fontSize: 12 }}>Resets everything back to the original sample inventory, users, and generated sales.</div>
             </div>
-            <button className="btn btn-secondary" disabled={Boolean(busyAction)} onClick={() => runAction("demo", onResetDemo)}>{busyAction === "demo" ? "Restoring..." : "Restore Demo"}</button>
+            <button className="btn btn-secondary" disabled={Boolean(busyAction)} onClick={() => setPendingAction("demo")}>Restore Demo</button>
           </div>
         </div>
       </div>}
+      <ConfirmDialog open={Boolean(pendingAction)} title={actions[pendingAction]?.title} message={actions[pendingAction]?.message} confirmLabel={actions[pendingAction]?.confirmLabel} tone={actions[pendingAction]?.tone || "danger"} busy={Boolean(busyAction)} onConfirm={confirmAction} onClose={() => setPendingAction(null)} />
     </>
   );
 }
@@ -1655,13 +1722,22 @@ function AdminDataTools({ txns, onClearHistory, onResetFresh, onResetDemo, canMa
 // ─── ADMIN: Audit Logs ───────────────────────────────────────────────────────
 function AdminAuditLogs({ logs }) {
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("date-desc");
+  const [page, setPage] = useState(1);
+  const sortOptions = [
+    { value: "date-desc", label: "Newest First", getValue: item => item.createdAt, direction: "desc" },
+    { value: "date-asc", label: "Oldest First", getValue: item => item.createdAt },
+    { value: "action-asc", label: "Action A-Z", getValue: item => item.action },
+    { value: "actor-asc", label: "Actor A-Z", getValue: item => item.actorName || "System" },
+  ];
   const query = search.toLowerCase();
   const filtered = logs.filter(log =>
     log.action.toLowerCase().includes(query) ||
     log.entityType.toLowerCase().includes(query) ||
     log.summary.toLowerCase().includes(query) ||
     String(log.actorName || "").toLowerCase().includes(query)
-  ).slice(0, 200);
+  );
+  const pagedLogs = paginateRows(sortRows(filtered, sort, sortOptions), page);
 
   const actionClass = (action) => {
     if (action.includes("delete") || action.includes("reset")) return "red";
@@ -1675,18 +1751,15 @@ function AdminAuditLogs({ logs }) {
     <>
       <div className="section-header">
         <h2>Audit Logs</h2>
-        <div className="search-wrap">
-          <span className="search-icon">{I.search}</span>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search activity..." style={{ width: 260 }} />
-        </div>
       </div>
 
       <div className="table-card">
+        <TableControls search={search} onSearchChange={value => { setSearch(value); setPage(1); }} placeholder="Search activity..." sort={sort} onSortChange={value => { setSort(value); setPage(1); }} sortOptions={sortOptions} total={filtered.length} />
         <table>
           <thead><tr><th>Time</th><th>Action</th><th>Summary</th><th>Actor</th><th>Entity</th></tr></thead>
           <tbody>
             {filtered.length === 0 ? <tr><td colSpan={5}><div className="empty">No audit logs yet</div></td></tr> :
-              filtered.map(log => (
+              pagedLogs.rows.map(log => (
                 <tr key={log.id}>
                   <td style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{new Date(log.createdAt).toLocaleString()}</td>
                   <td><span className={`badge-pill ${actionClass(log.action)}`}>{log.action}</span></td>
@@ -1700,6 +1773,7 @@ function AdminAuditLogs({ logs }) {
               ))}
           </tbody>
         </table>
+        <PaginationControls page={pagedLogs.page} pages={pagedLogs.pages} onPageChange={setPage} />
       </div>
     </>
   );
@@ -2138,6 +2212,14 @@ function UserDashboard({ currentUser, items, txns }) {
 // ─── USER: Receipts ──────────────────────────────────────────────────────────
 function UserReceipts({ txns, onPrintReceipt }) {
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("date-desc");
+  const [page, setPage] = useState(1);
+  const sortOptions = [
+    { value: "date-desc", label: "Newest First", getValue: item => `${item.date} ${item.time}`, direction: "desc" },
+    { value: "date-asc", label: "Oldest First", getValue: item => `${item.date} ${item.time}` },
+    { value: "total-desc", label: "Total: High to Low", getValue: item => Number(item.netTotal), direction: "desc" },
+    { value: "customer-asc", label: "Customer A-Z", getValue: item => item.customer.name },
+  ];
   const query = search.toLowerCase();
   const receipts = buildReceipts(txns).filter(receipt =>
     receipt.receiptNo.toLowerCase().includes(query) ||
@@ -2145,22 +2227,20 @@ function UserReceipts({ txns, onPrintReceipt }) {
     receipt.customer.contact.toLowerCase().includes(query) ||
     receipt.items.some(item => item.itemName.toLowerCase().includes(query) || item.sku.toLowerCase().includes(query))
   );
+  const pagedReceipts = paginateRows(sortRows(receipts, sort, sortOptions), page);
 
   return (
     <>
       <div className="section-header">
         <h2>Receipts</h2>
-        <div className="search-wrap">
-          <span className="search-icon">{I.search}</span>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search receipts…" style={{ width: 220 }} />
-        </div>
       </div>
       <div className="table-card">
+        <TableControls search={search} onSearchChange={value => { setSearch(value); setPage(1); }} placeholder="Search receipts..." sort={sort} onSortChange={value => { setSort(value); setPage(1); }} sortOptions={sortOptions} total={receipts.length} />
         <table>
           <thead><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Print</th></tr></thead>
           <tbody>
             {receipts.length === 0 ? <tr><td colSpan={7}><div className="empty">No receipts yet</div></td></tr> :
-              receipts.map(receipt => (
+              pagedReceipts.rows.map(receipt => (
                 <tr key={receipt.id}>
                   <td style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{receipt.date}<br />{receipt.time}</td>
                   <td><span className="badge-pill gray">{receipt.receiptNo}</span></td>
@@ -2181,6 +2261,7 @@ function UserReceipts({ txns, onPrintReceipt }) {
               ))}
           </tbody>
         </table>
+        <PaginationControls page={pagedReceipts.page} pages={pagedReceipts.pages} onPageChange={setPage} />
       </div>
     </>
   );
@@ -2254,7 +2335,7 @@ function UserSell({ items, customers, onSell, onPrintReceipt }) {
         <div style={{ background: "rgba(0,229,160,0.1)", border: "1px solid rgba(0,229,160,0.3)", borderRadius: 10, padding: "12px 16px", marginBottom: 16, color: "var(--accent)", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
           <span>{I.check} Sale completed successfully!</span>
           {lastReceipt && (
-            <button className="btn btn-sm btn-primary" style={{ marginLeft: "auto" }} disabled={lastReceipt.receiptPrinted} onClick={() => onPrintReceipt(lastReceipt, "both").then(printed => printed && setLastReceipt(r => r ? { ...r, receiptPrinted: true } : r))}>
+            <button className="btn btn-sm btn-primary" style={{ marginLeft: "auto" }} disabled={lastReceipt.receiptPrinted} onClick={() => onPrintReceipt(lastReceipt, "both", () => setLastReceipt(r => r ? { ...r, receiptPrinted: true } : r))}>
               {lastReceipt.receiptPrinted ? "Receipt Printed" : "Print Customer + Record Copies"}
             </button>
           )}
@@ -2418,6 +2499,8 @@ export default function App() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [dataLoading, setDataLoading] = useState(Boolean(user));
+  const [receiptPreview, setReceiptPreview] = useState(null);
+  const [printingReceipt, setPrintingReceipt] = useState(false);
 
   const unreadCount = notifications.filter(n => n.unread).length;
 
@@ -2528,14 +2611,12 @@ export default function App() {
   };
 
   const handleClearHistory = async () => {
-    if (!confirm("Delete all sales history, receipts, notifications, and reset sold counts?")) return;
     await api.delete("/admin/history");
     await fetchData();
     showToast("Sales history deleted.");
   };
 
   const handleResetFresh = async () => {
-    if (!confirm("Start fresh? This clears inventory, users, history, and notifications, keeping only your current admin account.")) return;
     await api.post("/admin/reset", { mode: "fresh" });
     await fetchData();
     setPage("dashboard");
@@ -2543,7 +2624,6 @@ export default function App() {
   };
 
   const handleResetDemo = async () => {
-    if (!confirm("Restore the original demo data? This replaces current inventory, users, history, and notifications.")) return;
     await api.post("/admin/reset", { mode: "seed" });
     await fetchData();
     setPage("dashboard");
@@ -2609,7 +2689,7 @@ export default function App() {
     return result;
   };
 
-  const handlePrintReceipt = async (receipt, copyType = "both") => {
+  const executeReceiptPrint = async (receipt, copyType = "both") => {
     const printWindow = window.open("", "_blank", "width=900,height=700");
     if (!printWindow) {
       showToast("The receipt print window was blocked by the browser.", "error");
@@ -2637,6 +2717,20 @@ export default function App() {
       showToast(err.message || "Unable to print receipt", "error");
       return false;
     }
+  };
+
+  const handlePrintReceipt = (receipt, copyType = "both", onPrinted) => {
+    setReceiptPreview({ receipt, copyType, onPrinted });
+  };
+
+  const printPreviewReceipt = async () => {
+    setPrintingReceipt(true);
+    const printed = await executeReceiptPrint(receiptPreview.receipt, receiptPreview.copyType);
+    if (printed) {
+      receiptPreview.onPrinted?.();
+      setReceiptPreview(null);
+    }
+    setPrintingReceipt(false);
   };
 
   // Notification API Operations
@@ -2696,6 +2790,14 @@ export default function App() {
   return (
     <div className="app">
       {dataLoading && <div className="app-loading-bar" />}
+      <ReceiptPreviewModal
+        preview={receiptPreview}
+        printing={printingReceipt}
+        footer={RECEIPT_FOOTER}
+        onCopyTypeChange={copyType => setReceiptPreview(current => ({ ...current, copyType }))}
+        onClose={() => setReceiptPreview(null)}
+        onPrint={printPreviewReceipt}
+      />
       <aside className="sidebar">
         <div className="sidebar-logo brand-lockup">
           <div className="brand-mark" aria-hidden="true"><span>SO</span></div>
